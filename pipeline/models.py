@@ -139,6 +139,42 @@ class SampleResult:
                 "lcs_ratio": self.metrics.lcs_ratio,
                 "compilable": self.compilability.success if self.compilability else None,
                 "compile_errors": self.compilability.error_messages if self.compilability else [],
+                "compile_exit_code": self.compilability.exit_code if self.compilability else None,
             },
             "llm_response": self.llm_response,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> SampleResult:
+        metrics_d = d["metrics"]
+        metrics = MetricsResult(
+            em=metrics_d["em"],
+            es=metrics_d["es"],
+            iou=metrics_d["iou"],
+            lcs_length=metrics_d["lcs_length"],
+            lcs_ratio=metrics_d["lcs_ratio"],
+        )
+        comp = None
+        if metrics_d.get("compilable") is not None:
+            comp = CompilabilityResult(
+                success=metrics_d["compilable"],
+                error_messages=metrics_d.get("compile_errors", []),
+                exit_code=metrics_d.get("compile_exit_code", 0),
+            )
+        return cls(
+            method_id=d["method_id"],
+            file_path=d["file_path"],
+            mode=d["mode"],
+            method_signature=d["method_signature"],
+            ground_truth=d["ground_truth"],
+            generated=d.get("generated", ""),
+            normalized_ground_truth=d.get("normalized_ground_truth", ""),
+            normalized_generated=d.get("normalized_generated", ""),
+            invocations_ordered=d.get("invocations_ordered", []),
+            invocations_as_used=d.get("invocations_as_used", []),
+            augmentation_block=d.get("augmentation_block"),
+            prompt=d.get("prompt", ""),
+            metrics=metrics,
+            compilability=comp,
+            llm_response=d.get("llm_response", {}),
+        )

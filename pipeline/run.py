@@ -15,7 +15,7 @@ from pipeline.metrics import compute_all_metrics
 from pipeline.models import ExtractedMethod, SampleResult
 from pipeline.normalize import normalize_code
 from pipeline.prompt import build_fim_prompt
-from pipeline.report import generate_report
+from pipeline.report import generate_report, load_sample_result, update_progress, write_sample_result
 
 logging.basicConfig(
     level=logging.INFO,
@@ -122,28 +122,61 @@ def run_experiment(config: Config) -> None:
     methods, classpath = build_dataset(config)
     log.info("Dataset: %d methods, %d classpath entries", len(methods), len(classpath))
 
+    output_dir = Path(config.output.dir)
     all_results: dict[str, list[SampleResult]] = {}
 
     for mode in config.experiment.modes:
         log.info("=== Running mode: %s ===", mode)
+        mode_dir = output_dir / mode
+        samples_dir = mode_dir / "samples"
+        samples_dir.mkdir(parents=True, exist_ok=True)
+
         mode_results: list[SampleResult] = []
+        completed = 0
 
         for i, method in enumerate(methods):
+            sample_path = samples_dir / f"sample_{i:03d}.json"
+
+            if sample_path.exists():
+                log.info("[%s] Sample %d/%d already exists, loading (resume)",
+                         mode, i + 1, len(methods))
+                try:
+                    result = load_sample_result(sample_path)
+                    mode_results.append(result)
+                    completed += 1
+                    continue
+                except Exception as e:
+                    log.warning("Failed to load existing sample %s, recomputing: %s",
+                                sample_path, e)
+
             try:
                 result = process_sample(method, mode, config, classpath, i, len(methods))
+                write_sample_result(
+                    result, sample_path,
+                    save_prompts=config.output.save_prompts,
+                    save_responses=config.output.save_responses,
+                )
                 mode_results.append(result)
+                completed += 1
             except Exception as e:
                 log.error("Failed to process sample %d (%s#%s): %s",
                           i, method.class_fqn, method.method_name, e)
 
+            update_progress(mode_dir, mode, completed, len(methods))
+
         all_results[mode] = mode_results
         log.info("Mode %s: %d/%d samples completed", mode, len(mode_results), len(methods))
 
+    config_summary = {
+        "model_name": config.llm.model_name,
+        "sample_count": config.dataset.sample_count,
+    }
     generate_report(
         all_results,
         config.output.dir,
         save_prompts=config.output.save_prompts,
         save_responses=config.output.save_responses,
+        config_summary=config_summary,
     )
 
 
