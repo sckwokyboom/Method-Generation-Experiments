@@ -30,8 +30,10 @@ def filter_methods(
             continue
         if not m.invocations:
             continue
+        if any(inv.resolution_mode != "EXACT" for inv in m.invocations):
+            continue
         filtered.append(m)
-    log.info("Filtered %d -> %d methods", len(methods), len(filtered))
+    log.info("Filtered %d -> %d methods (fully resolved invocations only)", len(methods), len(filtered))
     return filtered
 
 
