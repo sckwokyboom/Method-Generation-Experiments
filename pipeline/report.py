@@ -83,7 +83,7 @@ def generate_report(
         agg = aggregate_metrics(samples)
         summary[mode] = agg
 
-        with open(mode_dir / "aggregate.json", "w") as f:
+        with open(mode_dir / "aggregate.json", "w", encoding="utf-8") as f:
             json.dump(agg, f, indent=2)
 
         for i, sample in enumerate(samples):
@@ -93,14 +93,14 @@ def generate_report(
             if not save_responses:
                 sample_data.pop("generated", None)
 
-            with open(samples_dir / f"sample_{i:03d}.json", "w") as f:
+            with open(samples_dir / f"sample_{i:03d}.json", "w", encoding="utf-8") as f:
                 json.dump(sample_data, f, indent=2, ensure_ascii=False)
 
-    with open(output_dir / "summary.json", "w") as f:
+    with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
     table = generate_comparison_table(all_results)
-    with open(output_dir / "comparison_table.txt", "w") as f:
+    with open(output_dir / "comparison_table.txt", "w", encoding="utf-8") as f:
         f.write(table)
 
     log.info("Report saved to %s", output_dir)

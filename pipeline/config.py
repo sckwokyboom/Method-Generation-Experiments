@@ -72,7 +72,7 @@ class Config:
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
         return cls(
