@@ -80,22 +80,20 @@ public class ClasspathResolver {
         try {
             initScript = Files.createTempFile("extractor-init", ".gradle");
             Files.writeString(initScript, """
-                    def collectedClasspaths = []
-                    allprojects {
-                        afterEvaluate { proj ->
+                    gradle.projectsEvaluated {
+                        def classpathStrings = []
+                        gradle.rootProject.allprojects.each { proj ->
                             if (proj.plugins.hasPlugin('java')) {
                                 def sourceSets = proj.extensions.findByName('sourceSets')
                                 if (sourceSets != null && sourceSets.findByName('main') != null) {
-                                    collectedClasspaths.add(sourceSets.main.compileClasspath)
+                                    classpathStrings.add(sourceSets.main.compileClasspath.asPath)
                                 }
                             }
                         }
-                    }
-                    gradle.projectsEvaluated {
-                        rootProject.tasks.register('extractorPrintClasspath') {
+                        gradle.rootProject.tasks.register('extractorPrintClasspath') {
                             doLast {
-                                collectedClasspaths.each { cp ->
-                                    println 'EXTRACTOR_CLASSPATH=' + cp.asPath
+                                classpathStrings.each { cp ->
+                                    println 'EXTRACTOR_CLASSPATH=' + cp
                                 }
                             }
                         }
