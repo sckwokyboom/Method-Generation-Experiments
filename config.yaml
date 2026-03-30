@@ -1,0 +1,49 @@
+project:
+  name: "rustyconnector-minecraft"
+  path: "./target-project/rustyconnector-minecraft"
+  tag: "v0.8.2"
+  fallback_tag: "v0.9.1"
+
+extraction:
+  extractor_jar: "./extractor/build/libs/method-extractor.jar"
+  min_statements: 3
+  exclude_categories:
+    - GETTER
+    - SETTER
+    - DELEGATOR
+    - GENERATED
+    - TEST
+  output: "./results/extracted_methods.json"
+
+dataset:
+  sample_count: 100
+  random_seed: 42
+  output: "./results/dataset.json"
+
+llm:
+  endpoint_url: "http://localhost:8080/v1/completions"
+  model_name: "qwen2.5-coder-7b"
+  temperature: 0.0
+  max_tokens: 512
+  stop_sequences:
+    - "<|fim_pad|>"
+    - "<|endoftext|>"
+  num_generations: 1
+  seed: 42
+  timeout_seconds: 120
+
+experiment:
+  modes:
+    - no_augmentation
+    - ordered_augmentation
+    - shuffled_augmentation
+  shuffle_seed: 42
+
+compilability:
+  enabled: true
+  mode: "file"  # file | project
+
+output:
+  dir: "./results"
+  save_prompts: true
+  save_responses: true

@@ -1,0 +1,20 @@
+results/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Extractor
+extractor/build/
+extractor/.gradle/
+
+# Target project
+target-project/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store

@@ -1,0 +1,200 @@
+package com.experiment.extractor.classpath;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+public class ClasspathResolver {
+    private static final Logger log = LoggerFactory.getLogger(ClasspathResolver.class);
+
+    public record Result(
+            List<String> classpathEntries,
+            List<String> sourceRoots,
+            List<String> warnings
+    ) {}
+
+    public Result resolve(Path projectPath) {
+        List<String> warnings = new ArrayList<>();
+        Set<Path> classpath = new LinkedHashSet<>();
+        Set<Path> sourceRoots = detectSourceRoots(projectPath);
+
+        if (Files.exists(projectPath.resolve("build.gradle"))
+                || Files.exists(projectPath.resolve("build.gradle.kts"))) {
+            List<Path> gradleCp = resolveWithGradle(projectPath, warnings);
+            classpath.addAll(gradleCp);
+        }
+
+        if (Files.exists(projectPath.resolve("pom.xml")) && classpath.isEmpty()) {
+            List<Path> mavenCp = resolveWithMaven(projectPath, warnings);
+            classpath.addAll(mavenCp);
+        }
+
+        addBuildOutputs(projectPath, classpath);
+
+        List<String> cpStrings = classpath.stream()
+                .filter(Files::exists)
+                .map(p -> p.toAbsolutePath().toString())
+                .toList();
+
+        List<String> srStrings = sourceRoots.stream()
+                .filter(Files::exists)
+                .map(p -> p.toAbsolutePath().toString())
+                .toList();
+
+        log.info("Resolved {} classpath entries, {} source roots", cpStrings.size(), srStrings.size());
+        return new Result(cpStrings, srStrings, warnings);
+    }
+
+    private Set<Path> detectSourceRoots(Path projectPath) {
+        Set<Path> roots = new LinkedHashSet<>();
+        try (Stream<Path> stream = Files.walk(projectPath, 6)) {
+            stream.filter(Files::isDirectory)
+                    .forEach(path -> {
+                        String normalized = path.toString().replace('\\', '/').toLowerCase(Locale.ROOT);
+                        if (normalized.endsWith("/src/main/java")) {
+                            roots.add(path);
+                        }
+                    });
+        } catch (IOException e) {
+            log.warn("Failed to detect source roots for {}", projectPath, e);
+        }
+        if (roots.isEmpty()) {
+            roots.add(projectPath);
+        }
+        return roots;
+    }
+
+    private List<Path> resolveWithGradle(Path projectPath, List<String> warnings) {
+        Path initScript;
+        try {
+            initScript = Files.createTempFile("extractor-init", ".gradle");
+            Files.writeString(initScript, """
+                    allprojects {
+                        afterEvaluate {
+                            if (plugins.hasPlugin('java')) {
+                                tasks.register('extractorPrintClasspath') {
+                                    doLast {
+                                        def sourceSets = project.extensions.findByName('sourceSets')
+                                        if (sourceSets != null && sourceSets.findByName('main') != null) {
+                                            println 'EXTRACTOR_CLASSPATH=' + sourceSets.main.compileClasspath.asPath
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    """);
+        } catch (IOException e) {
+            warnings.add("Failed to create gradle init script: " + e.getMessage());
+            return List.of();
+        }
+
+        Path gradlew = projectPath.resolve("gradlew");
+        List<String> command;
+        if (Files.isExecutable(gradlew)) {
+            command = List.of("./gradlew", "-q", "extractorPrintClasspath", "-I", initScript.toString());
+        } else {
+            command = List.of("gradle", "-q", "extractorPrintClasspath", "-I", initScript.toString());
+        }
+
+        ProcessBuilder pb = new ProcessBuilder(command)
+                .directory(projectPath.toFile())
+                .redirectErrorStream(true);
+        try {
+            Process process = pb.start();
+            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exit = process.waitFor();
+            if (exit != 0) {
+                warnings.add("Gradle classpath resolution failed (exit " + exit + "): " + stdout);
+                return List.of();
+            }
+
+            List<Path> entries = new ArrayList<>();
+            for (String line : stdout.lines().toList()) {
+                if (line.startsWith("EXTRACTOR_CLASSPATH=")) {
+                    entries.addAll(splitClasspath(line.substring("EXTRACTOR_CLASSPATH=".length())));
+                }
+            }
+            return entries;
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            warnings.add("Gradle classpath resolution failed: " + e.getMessage());
+            return List.of();
+        } finally {
+            try { Files.deleteIfExists(initScript); } catch (IOException ignored) {}
+        }
+    }
+
+    private List<Path> resolveWithMaven(Path projectPath, List<String> warnings) {
+        Path outputFile;
+        try {
+            outputFile = Files.createTempFile("extractor-maven-cp", ".txt");
+        } catch (IOException e) {
+            warnings.add("Failed to create temp file for maven classpath: " + e.getMessage());
+            return List.of();
+        }
+
+        List<String> command = List.of(
+                "mvn", "-q", "-DskipTests", "-DincludeScope=compile",
+                "dependency:build-classpath", "-Dmdep.outputFile=" + outputFile
+        );
+
+        try {
+            Process process = new ProcessBuilder(command)
+                    .directory(projectPath.toFile())
+                    .inheritIO()
+                    .start();
+            int exit = process.waitFor();
+            if (exit != 0) {
+                warnings.add("Maven classpath resolution failed with exit code " + exit);
+                return List.of();
+            }
+            String content = Files.readString(outputFile, StandardCharsets.UTF_8).trim();
+            return content.isBlank() ? List.of() : splitClasspath(content);
+        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            warnings.add("Maven classpath resolution failed: " + e.getMessage());
+            return List.of();
+        } finally {
+            try { Files.deleteIfExists(outputFile); } catch (IOException ignored) {}
+        }
+    }
+
+    private void addBuildOutputs(Path projectPath, Set<Path> classpath) {
+        try (Stream<Path> stream = Files.walk(projectPath, 5)) {
+            stream.filter(Files::isDirectory)
+                    .forEach(path -> {
+                        String normalized = path.toString().replace('\\', '/');
+                        if (normalized.endsWith("/build/classes/java/main")
+                                || normalized.endsWith("/build/resources/main")
+                                || normalized.endsWith("/target/classes")) {
+                            classpath.add(path);
+                        }
+                    });
+        } catch (IOException e) {
+            log.debug("Skipping build outputs scan for {}", projectPath, e);
+        }
+    }
+
+    private List<Path> splitClasspath(String classpathLine) {
+        if (classpathLine == null || classpathLine.isBlank()) return List.of();
+        String separator = System.getProperty("path.separator", ":");
+        String[] parts = classpathLine.split(Pattern.quote(separator));
+        List<Path> result = new ArrayList<>();
+        for (String part : parts) {
+            if (!part.isBlank()) result.add(Path.of(part.trim()));
+        }
+        return result;
+    }
+}
