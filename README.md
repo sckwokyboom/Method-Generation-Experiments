@@ -222,6 +222,35 @@ python -m pipeline.run --config config.yaml --skip-extraction
 
 ---
 
+## Интерактивный просмотр результатов
+
+После прогона эксперимента можно сгенерировать интерактивный HTML-вьювер для детального анализа каждого сэмпла:
+
+```bash
+python -m pipeline.viewer --results-dir ./results
+```
+
+Откроет `results/viewer.html` — самодостаточный HTML-файл без серверных зависимостей.
+
+**Возможности:**
+
+- **Code** — подсветка синтаксиса Java для ground truth и сгенерированного кода всех 3 режимов (полные методы с сигнатурой)
+- **Diff** — side-by-side и unified diff между любыми парами: generated vs ground truth, cross-mode сравнение
+- **Prompt** — полный FIM-промпт с подсвеченными токенами `<|fim_prefix|>` / `<|fim_suffix|>` / `<|fim_middle|>`, augmentation block
+- **Meta** — latency, token usage, compilability, ошибки компиляции, таблица invocations
+
+**Навигация:** поиск по method ID, фильтры (EM Only, Compilable, Has Errors), стрелки вверх/вниз для переключения сэмплов, цифры 1-4 для табов, переключение светлой/тёмной темы.
+
+```bash
+# Исключить промпты (значительно уменьшает размер файла)
+python -m pipeline.viewer --results-dir ./results --no-prompts
+
+# Указать путь к выходному файлу
+python -m pipeline.viewer --results-dir ./results --output ./report.html
+```
+
+---
+
 ## Результаты
 
 После прогона в `results/` будет:
@@ -240,7 +269,8 @@ results/
 ├── shuffled_augmentation/
 │   └── ...
 ├── summary.json                   # Сравнение всех режимов
-└── comparison_table.txt           # Таблица метрик
+├── comparison_table.txt           # Таблица метрик
+└── viewer.html                    # Интерактивный вьювер (генерируется viewer.py)
 ```
 
 ### Пример таблицы сравнения
@@ -294,6 +324,7 @@ pipeline/
   report.py          # Агрегация + таблицы
   run.py             # Главный оркестратор
   inspect.py         # Dry-run инспекция сэмплов
+  viewer.py          # Генератор интерактивного HTML-вьювера
 ```
 
 ---

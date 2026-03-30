@@ -100,10 +100,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Method Generation Experiment Viewer</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html@3.4.47/bundles/css/diff2html.min.css">
 <style>
-:root {
+:root, [data-theme="dark"] {
   --bg: #1e1e2e;
   --bg-surface: #252536;
   --bg-elevated: #2d2d44;
@@ -122,6 +122,48 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   --scrollbar: #45456a;
   --scrollbar-hover: #5a5a7a;
   --sidebar-w: 300px;
+  --diff-del-bg: #2a1520;
+  --diff-ins-bg: #152a1a;
+  --diff-del-line: #f38ba8;
+  --diff-ins-line: #a6e3a1;
+  --diff-del-highlight: rgba(243,139,168,0.25);
+  --diff-ins-highlight: rgba(166,227,161,0.25);
+  --diff-text: #cdd6f4;
+  --diff-gutter: #1e1e2e;
+  --diff-gutter-text: #6c7086;
+  --diff-info-bg: #2d2d44;
+  --hljs-theme: "atom-one-dark";
+}
+
+[data-theme="light"] {
+  --bg: #eff1f5;
+  --bg-surface: #ffffff;
+  --bg-elevated: #e6e9ef;
+  --bg-hover: #dce0e8;
+  --text: #4c4f69;
+  --text-dim: #7c7f93;
+  --text-bright: #1e1e2e;
+  --border: #ccd0da;
+  --accent: #1e66f5;
+  --mode-none: #7c7f93;
+  --mode-ordered: #40a02b;
+  --mode-shuffled: #fe640b;
+  --em-yes: #40a02b;
+  --em-no: #d20f39;
+  --bar-bg: #ccd0da;
+  --scrollbar: #bcc0cc;
+  --scrollbar-hover: #acb0be;
+  --diff-del-bg: #fce4ec;
+  --diff-ins-bg: #e8f5e9;
+  --diff-del-line: #d20f39;
+  --diff-ins-line: #40a02b;
+  --diff-del-highlight: rgba(210,15,57,0.15);
+  --diff-ins-highlight: rgba(64,160,43,0.15);
+  --diff-text: #4c4f69;
+  --diff-gutter: #e6e9ef;
+  --diff-gutter-text: #9ca0b0;
+  --diff-info-bg: #e6e9ef;
+  --hljs-theme: "atom-one-light";
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -564,18 +606,36 @@ body {
 }
 .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
 
-/* Override diff2html colors for dark theme */
-.d2h-code-linenumber { color: var(--text-dim) !important; }
-.d2h-info { background: var(--bg-elevated) !important; color: var(--text-dim) !important; border-color: var(--border) !important; }
-.d2h-file-diff .d2h-del.d2h-change { background: #3d1f2a !important; }
-.d2h-file-diff .d2h-ins.d2h-change { background: #1f3d2a !important; }
-.d2h-del { background: #2d1b1f !important; }
-.d2h-ins { background: #1b2d1f !important; }
-.d2h-code-line del { background: #5c2d33 !important; }
-.d2h-code-line ins { background: #2d5c33 !important; }
-.d2h-code-side-line { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; }
-.d2h-file-wrapper { border-color: var(--border) !important; }
+/* Override diff2html colors — themed */
+.d2h-wrapper { background: transparent !important; }
+.d2h-file-wrapper { border: 1px solid var(--border) !important; border-radius: 6px !important; overflow: hidden !important; }
+.d2h-file-header { display: none !important; }
 .d2h-file-collapse, .d2h-file-list-wrapper { display: none !important; }
+
+.d2h-code-linenumber { color: var(--diff-gutter-text) !important; background: var(--diff-gutter) !important; border-color: var(--border) !important; }
+.d2h-info { background: var(--diff-info-bg) !important; color: var(--text-dim) !important; border-color: var(--border) !important; }
+.d2h-code-side-line, .d2h-code-line { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; }
+
+/* Unchanged lines */
+.d2h-code-side-linenumber { color: var(--diff-gutter-text) !important; background: var(--diff-gutter) !important; border-color: var(--border) !important; }
+.d2h-cntx { background: var(--bg) !important; color: var(--diff-text) !important; }
+.d2h-cntx .d2h-code-side-line, .d2h-cntx .d2h-code-line { color: var(--diff-text) !important; }
+
+/* Deleted lines — use left-border accent instead of heavy bg */
+.d2h-del { background: var(--diff-del-bg) !important; border-color: var(--border) !important; }
+.d2h-del .d2h-code-side-line, .d2h-del .d2h-code-line { color: var(--diff-text) !important; }
+.d2h-del .d2h-code-side-linenumber { color: var(--diff-del-line) !important; background: var(--diff-del-bg) !important; }
+.d2h-code-line del, .d2h-code-side-line del { background: var(--diff-del-highlight) !important; color: var(--diff-del-line) !important; text-decoration: none !important; border-radius: 2px; padding: 1px 0; }
+
+/* Inserted lines */
+.d2h-ins { background: var(--diff-ins-bg) !important; border-color: var(--border) !important; }
+.d2h-ins .d2h-code-side-line, .d2h-ins .d2h-code-line { color: var(--diff-text) !important; }
+.d2h-ins .d2h-code-side-linenumber { color: var(--diff-ins-line) !important; background: var(--diff-ins-bg) !important; }
+.d2h-code-line ins, .d2h-code-side-line ins { background: var(--diff-ins-highlight) !important; color: var(--diff-ins-line) !important; text-decoration: none !important; border-radius: 2px; padding: 1px 0; }
+
+/* Ensure tables and cells inherit properly */
+.d2h-diff-table { border-collapse: collapse !important; }
+.d2h-diff-tbody tr td { border-color: var(--border) !important; }
 
 @media (max-width: 900px) {
   #sidebar { width: 220px; min-width: 220px; }
@@ -588,7 +648,10 @@ body {
 <div id="app">
   <aside id="sidebar">
     <div id="sidebar-header">
-      <h2>Samples</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <h2 style="margin-bottom:0">Samples</h2>
+        <button id="theme-toggle" title="Toggle light/dark theme" style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;color:var(--text);font-size:14px;">&#9789;</button>
+      </div>
       <input id="search-input" type="text" placeholder="Search by method ID... ( / )">
       <div id="filters">
         <button class="filter-chip" data-filter="em">EM Only</button>
@@ -647,6 +710,12 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function fullMethod(sample, body) {
+  const sig = sample?.method_signature || '';
+  const b = body ?? '';
+  return sig + ' {\n' + b + '\n}';
 }
 
 function getModeColor(mode) {
@@ -824,7 +893,7 @@ function renderCodeTab() {
   if (!any) return '<div class="not-available">No data</div>';
 
   let html = '<div class="code-section"><div class="code-section-title">Ground Truth</div>';
-  html += codeBlock('Ground Truth', 'mode-tag-none', any.ground_truth);
+  html += codeBlock('Ground Truth', 'mode-tag-none', fullMethod(any, any.ground_truth));
   html += '</div>';
 
   html += '<div class="code-section"><div class="code-section-title">Generated Code</div>';
@@ -832,7 +901,7 @@ function renderCodeTab() {
   for (const mode of MODES) {
     const s = data[mode];
     const mc = getModeColor(mode);
-    html += codeBlock(getModeLabel(mode), mc.tag, s?.generated);
+    html += codeBlock(getModeLabel(mode), mc.tag, s ? fullMethod(s, s.generated) : undefined);
   }
   html += '</div></div>';
 
@@ -850,8 +919,8 @@ function buildDiffPairs() {
     if (data[mode]) {
       pairs.push({
         label: `${getModeLabel(mode)}: Generated vs Ground Truth`,
-        a: { name: 'Ground Truth', code: any.ground_truth || '' },
-        b: { name: `Generated (${getModeLabel(mode)})`, code: data[mode].generated || '' },
+        a: { name: 'Ground Truth', code: fullMethod(any, any.ground_truth || '') },
+        b: { name: `Generated (${getModeLabel(mode)})`, code: fullMethod(data[mode], data[mode].generated || '') },
       });
     }
   }
@@ -861,8 +930,8 @@ function buildDiffPairs() {
       if (data[MODES[i]] && data[MODES[j]]) {
         pairs.push({
           label: `${getModeLabel(MODES[i])} vs ${getModeLabel(MODES[j])}`,
-          a: { name: getModeLabel(MODES[i]), code: data[MODES[i]].generated || '' },
-          b: { name: getModeLabel(MODES[j]), code: data[MODES[j]].generated || '' },
+          a: { name: getModeLabel(MODES[i]), code: fullMethod(data[MODES[i]], data[MODES[i]].generated || '') },
+          b: { name: getModeLabel(MODES[j]), code: fullMethod(data[MODES[j]], data[MODES[j]].generated || '') },
         });
       }
     }
@@ -1158,6 +1227,34 @@ document.addEventListener('keydown', e => {
     }
   }
 });
+
+// --- Theme Toggle ---
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const hljsLink = document.getElementById('hljs-theme');
+  if (theme === 'light') {
+    hljsLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css';
+    document.getElementById('theme-toggle').innerHTML = '&#9728;';
+  } else {
+    hljsLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css';
+    document.getElementById('theme-toggle').innerHTML = '&#9789;';
+  }
+  localStorage.setItem('viewer-theme', theme);
+  // Re-highlight visible code blocks
+  document.querySelectorAll('#tab-content pre code.language-java').forEach(el => {
+    el.removeAttribute('data-highlighted');
+    if (typeof hljs !== 'undefined') hljs.highlightElement(el);
+  });
+}
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  setTheme(current === 'dark' ? 'light' : 'dark');
+});
+
+// Restore saved theme
+const savedTheme = localStorage.getItem('viewer-theme') || 'dark';
+if (savedTheme !== 'dark') setTheme(savedTheme);
 
 // --- Init ---
 if (SAMPLE_KEYS.length === 0) {
