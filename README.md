@@ -66,21 +66,38 @@ git clone --branch v0.8.2 \
 
 > Если `v0.8.2` не соберётся, попробовать `v0.9.1`.
 
+> **Внимание:** В v0.8.2 Gradle-проект расположен в подпапке `plugin/`, а не в корне репозитория. Extractor и config.yaml уже указывают на `plugin/`.
+
+### 4. Собрать target-проект
+
+Target-проект нужно скомпилировать **до** запуска экстрактора — JDT-у нужны `.class` файлы для type resolution.
+
+```bash
+cd target-project/rustyconnector-minecraft/plugin
+chmod +x gradlew
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew compileJava
+cd ../../..
+```
+
+> **Важно:** и сборка target-проекта, и запуск экстрактора должны использовать **Java 17**. Системная Java 25 не поддерживается Gradle 8.6, который используется в rustyconnector.
+
 ---
 
 ## Запуск экстракции
 
-Extractor строит target-проект через Gradle, резолвит classpath через JDT Symbol Solver и извлекает методы.
+Extractor резолвит classpath через Gradle init script и извлекает методы с полным type resolution через JDT.
 
-**Занимает 3–10 минут** (включая сборку target-проекта).
+**Занимает ~10 секунд** (при уже скомпилированном проекте).
 
 ```bash
-java -jar extractor/build/libs/method-extractor.jar \
-  --project-path ./target-project/rustyconnector-minecraft \
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  $(/usr/libexec/java_home -v 17)/bin/java -jar extractor/build/libs/method-extractor.jar \
+  --project-path ./target-project/rustyconnector-minecraft/plugin \
   --output ./results/extracted_methods.json \
-  --min-statements 3 \
-  --build-first
+  --min-statements 3
 ```
+
+> **Почему Java 17?** Extractor вызывает `./gradlew` target-проекта для classpath resolution. С Java 25 Gradle 8.6 падает (`Unsupported class file major version 69`). С Java 17 резолвится ~100 classpath entries и ~95% invocations получают EXACT resolution.
 
 После завершения: `results/extracted_methods.json` содержит все извлечённые методы с сигнатурами invocations.
 

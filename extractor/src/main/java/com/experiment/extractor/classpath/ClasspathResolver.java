@@ -100,10 +100,11 @@ public class ClasspathResolver {
             return List.of();
         }
 
-        Path gradlew = projectPath.resolve("gradlew");
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        Path gradlew = projectPath.resolve(isWindows ? "gradlew.bat" : "gradlew");
         List<String> command;
-        if (Files.isExecutable(gradlew)) {
-            command = List.of("./gradlew", "-q", "extractorPrintClasspath", "-I", initScript.toString());
+        if (Files.exists(gradlew)) {
+            command = List.of(gradlew.toAbsolutePath().toString(), "-q", "extractorPrintClasspath", "-I", initScript.toString());
         } else {
             command = List.of("gradle", "-q", "extractorPrintClasspath", "-I", initScript.toString());
         }

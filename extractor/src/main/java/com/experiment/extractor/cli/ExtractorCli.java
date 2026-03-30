@@ -83,21 +83,22 @@ public class ExtractorCli implements Callable<Integer> {
     }
 
     private boolean buildProject() {
-        Path gradlew = projectPath.resolve("gradlew");
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        Path gradlew = projectPath.resolve(isWindows ? "gradlew.bat" : "gradlew");
         List<String> command;
-        if (Files.isExecutable(gradlew)) {
-            command = java.util.List.of("./gradlew", "build", "-x", "test");
+        if (Files.exists(gradlew)) {
+            command = List.of(gradlew.toAbsolutePath().toString(), "build", "-x", "test", "-x", "shadowJar");
         } else if (Files.exists(projectPath.resolve("pom.xml"))) {
-            command = java.util.List.of("mvn", "compile", "-DskipTests");
+            command = List.of("mvn", "compile", "-DskipTests");
         } else {
-            command = java.util.List.of("gradle", "build", "-x", "test");
+            command = List.of("gradle", "build", "-x", "test", "-x", "shadowJar");
         }
 
         try {
-            Process process = new ProcessBuilder(command)
+            ProcessBuilder pb = new ProcessBuilder(command)
                     .directory(projectPath.toFile())
-                    .inheritIO()
-                    .start();
+                    .inheritIO();
+            Process process = pb.start();
             return process.waitFor() == 0;
         } catch (IOException | InterruptedException e) {
             Thread.currentThread().interrupt();

@@ -1,6 +1,6 @@
 project:
   name: "rustyconnector-minecraft"
-  path: "./target-project/rustyconnector-minecraft"
+  path: "./target-project/rustyconnector-minecraft/plugin"
   tag: "v0.8.2"
   fallback_tag: "v0.9.1"
 

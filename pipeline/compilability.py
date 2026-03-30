@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -41,7 +42,8 @@ def check_compilability(
 
         cmd = [javac]
         if classpath:
-            cmd.extend(["-cp", ":".join(classpath)])
+            sep = ";" if sys.platform == "win32" else ":"
+            cmd.extend(["-cp", sep.join(classpath)])
         cmd.extend(["-source", "21", "-target", "21", "-nowarn", str(target_file)])
 
         try:
