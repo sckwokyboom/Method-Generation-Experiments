@@ -81,19 +81,11 @@ public class ClasspathResolver {
             initScript = Files.createTempFile("extractor-init", ".gradle");
             Files.writeString(initScript, """
                     gradle.projectsEvaluated {
-                        def classpathStrings = []
                         gradle.rootProject.allprojects.each { proj ->
-                            if (proj.plugins.hasPlugin('java')) {
+                            if (proj.plugins.hasPlugin('java') || proj.plugins.hasPlugin('java-library')) {
                                 def sourceSets = proj.extensions.findByName('sourceSets')
                                 if (sourceSets != null && sourceSets.findByName('main') != null) {
-                                    classpathStrings.add(sourceSets.main.compileClasspath.asPath)
-                                }
-                            }
-                        }
-                        gradle.rootProject.tasks.register('extractorPrintClasspath') {
-                            doLast {
-                                classpathStrings.each { cp ->
-                                    println 'EXTRACTOR_CLASSPATH=' + cp
+                                    println 'EXTRACTOR_CLASSPATH=' + sourceSets.main.compileClasspath.asPath
                                 }
                             }
                         }
@@ -108,9 +100,9 @@ public class ClasspathResolver {
         Path gradlew = projectPath.resolve(isWindows ? "gradlew.bat" : "gradlew");
         List<String> command;
         if (Files.exists(gradlew)) {
-            command = List.of(gradlew.toAbsolutePath().toString(), "-q", "extractorPrintClasspath", "-I", initScript.toString());
+            command = List.of(gradlew.toAbsolutePath().toString(), "-q", "help", "-I", initScript.toString());
         } else {
-            command = List.of("gradle", "-q", "extractorPrintClasspath", "-I", initScript.toString());
+            command = List.of("gradle", "-q", "help", "-I", initScript.toString());
         }
 
         ProcessBuilder pb = new ProcessBuilder(command)
