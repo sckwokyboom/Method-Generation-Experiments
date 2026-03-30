@@ -70,6 +70,7 @@ class FIMPrompt:
     suffix: str
     ground_truth: str
     augmentation_block: str | None
+    invocations_as_used: list[ResolvedInvocation]
     full_prompt: str
 
 
@@ -103,11 +104,15 @@ class SampleResult:
     method_id: str
     file_path: str
     mode: str
-    prompt: str
+    method_signature: str
     ground_truth: str
     generated: str
     normalized_ground_truth: str
     normalized_generated: str
+    invocations_ordered: list[dict]
+    invocations_as_used: list[dict]
+    augmentation_block: str | None
+    prompt: str
     metrics: MetricsResult
     compilability: CompilabilityResult | None
     llm_response: dict
@@ -117,11 +122,15 @@ class SampleResult:
             "method_id": self.method_id,
             "file_path": self.file_path,
             "mode": self.mode,
-            "prompt": self.prompt,
+            "method_signature": self.method_signature,
             "ground_truth": self.ground_truth,
             "generated": self.generated,
             "normalized_ground_truth": self.normalized_ground_truth,
             "normalized_generated": self.normalized_generated,
+            "invocations_ordered": self.invocations_ordered,
+            "invocations_as_used": self.invocations_as_used,
+            "augmentation_block": self.augmentation_block,
+            "prompt": self.prompt,
             "metrics": {
                 "em": self.metrics.em,
                 "es": self.metrics.es,

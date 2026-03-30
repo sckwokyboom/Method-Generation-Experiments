@@ -13,9 +13,9 @@ def build_augmentation_block(
     invocations: list[ResolvedInvocation],
     mode: str,
     shuffle_seed: int | None = None,
-) -> str | None:
+) -> tuple[str | None, list[ResolvedInvocation]]:
     if mode == "no_augmentation" or not invocations:
-        return None
+        return None, sorted(invocations, key=lambda inv: inv.order_index)
 
     ordered = sorted(invocations, key=lambda inv: inv.order_index)
 
@@ -31,7 +31,7 @@ def build_augmentation_block(
         lines.append(f" * {i}. {inv.signature} [{inv.resolution_mode}]")
     lines.append(" */")
 
-    return "\n".join(lines)
+    return "\n".join(lines), ordered
 
 
 def find_method_signature_position(file_content: str, body_start_offset: int) -> int:
@@ -84,7 +84,7 @@ def build_fim_prompt(
     suffix = file_content[body_end:]
     ground_truth = file_content[body_start + 1 : body_end]
 
-    aug_block = build_augmentation_block(method.invocations, mode, shuffle_seed)
+    aug_block, invocations_as_used = build_augmentation_block(method.invocations, mode, shuffle_seed)
 
     if aug_block:
         insert_pos = find_method_signature_position(file_content, body_start)
@@ -97,5 +97,6 @@ def build_fim_prompt(
         suffix=suffix,
         ground_truth=ground_truth,
         augmentation_block=aug_block,
+        invocations_as_used=invocations_as_used,
         full_prompt=full_prompt,
     )

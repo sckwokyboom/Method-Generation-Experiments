@@ -81,15 +81,28 @@ def process_sample(
 
     method_id = f"{method.class_fqn}#{method.method_name}"
 
+    invocations_ordered = [
+        {"order_index": inv.order_index, "signature": inv.signature, "resolution_mode": inv.resolution_mode}
+        for inv in sorted(method.invocations, key=lambda i: i.order_index)
+    ]
+    invocations_as_used = [
+        {"order_index": inv.order_index, "signature": inv.signature, "resolution_mode": inv.resolution_mode}
+        for inv in fim_prompt.invocations_as_used
+    ]
+
     return SampleResult(
         method_id=method_id,
         file_path=method.file_path,
         mode=mode,
-        prompt=fim_prompt.full_prompt,
+        method_signature=method.method_signature,
         ground_truth=fim_prompt.ground_truth,
         generated=completion.text,
         normalized_ground_truth=norm_ref,
         normalized_generated=norm_gen,
+        invocations_ordered=invocations_ordered,
+        invocations_as_used=invocations_as_used,
+        augmentation_block=fim_prompt.augmentation_block,
+        prompt=fim_prompt.full_prompt,
         metrics=metrics,
         compilability=compilability,
         llm_response={
