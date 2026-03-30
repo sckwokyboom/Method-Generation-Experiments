@@ -72,10 +72,10 @@ def process_sample(
 
     completion = generate_completion(fim_prompt.full_prompt, config.llm)
 
-    norm_gen = normalize_code(completion.text)
-    norm_ref = normalize_code(fim_prompt.ground_truth)
+    norm_gen = normalize_code(completion.text, identifier_unify=True)
+    norm_ref = normalize_code(fim_prompt.ground_truth, identifier_unify=True)
 
-    metrics = compute_all_metrics(completion.text, fim_prompt.ground_truth)
+    metrics = compute_all_metrics(completion.text, fim_prompt.ground_truth, identifier_unify=True)
 
     compilability = None
     if config.compilability.enabled:

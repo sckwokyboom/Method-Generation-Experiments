@@ -4,8 +4,10 @@ from collections import Counter
 
 import Levenshtein
 
+from pipeline.codebleu_metric import compute_codebleu
 from pipeline.models import MetricsResult
 from pipeline.normalize import normalize_code, tokenize_code
+from pipeline.strip_identifiers import strip_identifiers_and_literals
 
 
 def exact_match(generated: str, reference: str) -> bool:
@@ -73,6 +75,7 @@ def compute_all_metrics(
     generated: str,
     reference: str,
     identifier_unify: bool = False,
+    include_codebleu: bool = True,
 ) -> MetricsResult:
     norm_gen = normalize_code(generated, identifier_unify=identifier_unify)
     norm_ref = normalize_code(reference, identifier_unify=identifier_unify)
@@ -82,10 +85,24 @@ def compute_all_metrics(
     ref_tokens = tokenize_code(norm_ref)
     max_tok_len = max(len(gen_tokens), len(ref_tokens))
 
+    # LCS on identifier/literal-stripped code.
+    stripped_gen = strip_identifiers_and_literals(generated)
+    stripped_ref = strip_identifiers_and_literals(reference)
+    lcs_no_ident_len = longest_common_subsequence(stripped_gen, stripped_ref)
+    stripped_gen_tokens = tokenize_code(stripped_gen)
+    stripped_ref_tokens = tokenize_code(stripped_ref)
+    max_stripped_len = max(len(stripped_gen_tokens), len(stripped_ref_tokens))
+
+    # CodeBLEU.
+    codebleu_score = compute_codebleu(generated, reference) if include_codebleu else None
+
     return MetricsResult(
         em=exact_match(norm_gen, norm_ref),
         es=edit_similarity(norm_gen, norm_ref),
         iou=token_iou(norm_gen, norm_ref),
         lcs_length=lcs_len,
         lcs_ratio=lcs_len / max_tok_len if max_tok_len > 0 else 1.0,
+        lcs_no_ident_length=lcs_no_ident_len,
+        lcs_no_ident_ratio=lcs_no_ident_len / max_stripped_len if max_stripped_len > 0 else 1.0,
+        codebleu=codebleu_score,
     )

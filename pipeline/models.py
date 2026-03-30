@@ -90,6 +90,9 @@ class MetricsResult:
     iou: float
     lcs_length: int
     lcs_ratio: float
+    lcs_no_ident_length: int | None = None
+    lcs_no_ident_ratio: float | None = None
+    codebleu: float | None = None
 
 
 @dataclass
@@ -137,6 +140,9 @@ class SampleResult:
                 "iou": self.metrics.iou,
                 "lcs_length": self.metrics.lcs_length,
                 "lcs_ratio": self.metrics.lcs_ratio,
+                "lcs_no_ident_length": self.metrics.lcs_no_ident_length,
+                "lcs_no_ident_ratio": self.metrics.lcs_no_ident_ratio,
+                "codebleu": self.metrics.codebleu,
                 "compilable": self.compilability.success if self.compilability else None,
                 "compile_errors": self.compilability.error_messages if self.compilability else [],
                 "compile_exit_code": self.compilability.exit_code if self.compilability else None,
@@ -153,6 +159,9 @@ class SampleResult:
             iou=metrics_d["iou"],
             lcs_length=metrics_d["lcs_length"],
             lcs_ratio=metrics_d["lcs_ratio"],
+            lcs_no_ident_length=metrics_d.get("lcs_no_ident_length"),
+            lcs_no_ident_ratio=metrics_d.get("lcs_no_ident_ratio"),
+            codebleu=metrics_d.get("codebleu"),
         )
         comp = None
         if metrics_d.get("compilable") is not None:

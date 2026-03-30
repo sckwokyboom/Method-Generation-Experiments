@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "method-gen-experiments"
@@ -11,8 +11,15 @@ dependencies = [
     "requests>=2.31",
     "python-Levenshtein>=0.25",
     "tabulate>=0.9",
+    "tree-sitter>=0.22,<0.23",
+    "tree-sitter-java>=0.21,<0.23",
+    "codebleu>=0.7",
 ]
+
+[tool.setuptools.packages.find]
+include = ["pipeline*"]
 
 [project.scripts]
 mgx = "pipeline.run:main"
 mgx-viewer = "pipeline.viewer:main"
+mgx-recompute = "pipeline.recompute:main"

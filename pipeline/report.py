@@ -70,6 +70,14 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
     lcs_ratio_values = [s.metrics.lcs_ratio for s in samples]
     lcs_length_values = [s.metrics.lcs_length for s in samples]
 
+    lcs_no_ident_ratio_values = [
+        s.metrics.lcs_no_ident_ratio for s in samples if s.metrics.lcs_no_ident_ratio is not None
+    ]
+    lcs_no_ident_length_values = [
+        s.metrics.lcs_no_ident_length for s in samples if s.metrics.lcs_no_ident_length is not None
+    ]
+    codebleu_values = [s.metrics.codebleu for s in samples if s.metrics.codebleu is not None]
+
     compilable = [s for s in samples if s.compilability is not None]
     comp_values = [1 if s.compilability.success else 0 for s in compilable]
 
@@ -89,6 +97,9 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
         "iou": stats(iou_values),
         "lcs_length": stats(lcs_length_values),
         "lcs_ratio": stats(lcs_ratio_values),
+        "lcs_no_ident_length": stats(lcs_no_ident_length_values) if lcs_no_ident_length_values else None,
+        "lcs_no_ident_ratio": stats(lcs_no_ident_ratio_values) if lcs_no_ident_ratio_values else None,
+        "codebleu": stats(codebleu_values) if codebleu_values else None,
         "compilable": stats(comp_values) if comp_values else None,
     }
 
@@ -99,7 +110,7 @@ def generate_comparison_table(all_results: dict[str, list[SampleResult]]) -> str
     headers = ["Metric"] + list(all_results.keys())
     rows = []
 
-    for metric_name in ["em", "es", "iou", "lcs_ratio", "compilable"]:
+    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable"]:
         row = [metric_name]
         for mode in all_results:
             agg = aggregates[mode].get(metric_name)
@@ -155,14 +166,17 @@ def _format_sample_markdown(i: int, sample: SampleResult) -> str:
     if sample.compilability is not None:
         comp_str = "Yes" if sample.compilability.success else "No"
 
+    lcs_ni = f"{m.lcs_no_ident_ratio:.4f}" if m.lcs_no_ident_ratio is not None else "N/A"
+    cb = f"{m.codebleu:.4f}" if m.codebleu is not None else "N/A"
+
     lines = [
         f"#### Sample {i:03d}: `{sample.method_id}`",
         f"**File**: `{sample.file_path}`  ",
         f"**Signature**: `{sample.method_signature}`",
         "",
-        "| EM | ES | IoU | LCS Ratio | Compilable |",
-        "|----|-----|-----|-----------|------------|",
-        f"| {1 if m.em else 0} | {m.es:.4f} | {m.iou:.4f} | {m.lcs_ratio:.4f} | {comp_str} |",
+        "| EM | ES | IoU | LCS Ratio | LCS-NoIdent | CodeBLEU | Compilable |",
+        "|----|-----|-----|-----------|-------------|----------|------------|",
+        f"| {1 if m.em else 0} | {m.es:.4f} | {m.iou:.4f} | {m.lcs_ratio:.4f} | {lcs_ni} | {cb} | {comp_str} |",
         "",
     ]
 
@@ -260,7 +274,7 @@ def generate_markdown_report(
     headers = ["Metric"] + modes
     lines.append("| " + " | ".join(headers) + " |")
     lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-    for metric_name in ["em", "es", "iou", "lcs_ratio", "compilable"]:
+    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable"]:
         row = [metric_name]
         for mode in modes:
             agg = aggregates[mode].get(metric_name)
@@ -274,7 +288,7 @@ def generate_markdown_report(
     # Key findings
     lines.append("### Key Findings")
     lines.append("")
-    for metric_name in ["em", "es", "iou", "lcs_ratio", "compilable"]:
+    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable"]:
         best_mode = None
         best_val = -1.0
         for mode in modes:
@@ -298,7 +312,7 @@ def generate_markdown_report(
         lines.append("")
         lines.append("| Metric | Mean | Median | Std |")
         lines.append("|--------|------|--------|-----|")
-        for metric_name in ["em", "es", "iou", "lcs_length", "lcs_ratio", "compilable"]:
+        for metric_name in ["em", "es", "iou", "lcs_length", "lcs_ratio", "lcs_no_ident_length", "lcs_no_ident_ratio", "codebleu", "compilable"]:
             m = agg.get(metric_name)
             if m is None:
                 lines.append(f"| {metric_name} | N/A | N/A | N/A |")
