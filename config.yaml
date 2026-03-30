@@ -30,7 +30,8 @@ llm:
     - "<|endoftext|>"
   num_generations: 1
   seed: 42
-  timeout_seconds: 120
+  timeout_seconds: 300
+  max_concurrent_requests: 4
 
 experiment:
   modes:

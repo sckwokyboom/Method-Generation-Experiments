@@ -5,6 +5,8 @@ import json
 import logging
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from pipeline.compilability import check_compilability
@@ -113,6 +115,117 @@ def process_sample(
     )
 
 
+def _run_mode_sequential(
+    methods: list[ExtractedMethod],
+    mode: str,
+    config: Config,
+    classpath: list[str],
+    samples_dir: Path,
+    mode_dir: Path,
+) -> list[SampleResult]:
+    results_by_idx: dict[int, SampleResult] = {}
+    completed = 0
+
+    for i, method in enumerate(methods):
+        sample_path = samples_dir / f"sample_{i:03d}.json"
+
+        if sample_path.exists():
+            log.info("[%s] Sample %d/%d already exists, loading (resume)",
+                     mode, i + 1, len(methods))
+            try:
+                results_by_idx[i] = load_sample_result(sample_path)
+                completed += 1
+                continue
+            except Exception as e:
+                log.warning("Failed to load existing sample %s, recomputing: %s",
+                            sample_path, e)
+
+        try:
+            result = process_sample(method, mode, config, classpath, i, len(methods))
+            write_sample_result(
+                result, sample_path,
+                save_prompts=config.output.save_prompts,
+                save_responses=config.output.save_responses,
+            )
+            results_by_idx[i] = result
+            completed += 1
+        except Exception as e:
+            log.error("Failed to process sample %d (%s#%s): %s",
+                      i, method.class_fqn, method.method_name, e)
+
+        update_progress(mode_dir, mode, completed, len(methods))
+
+    return [results_by_idx[i] for i in sorted(results_by_idx)]
+
+
+def _run_mode_concurrent(
+    methods: list[ExtractedMethod],
+    mode: str,
+    config: Config,
+    classpath: list[str],
+    samples_dir: Path,
+    mode_dir: Path,
+    max_workers: int,
+) -> list[SampleResult]:
+    results_by_idx: dict[int, SampleResult] = {}
+    completed = 0
+    progress_lock = threading.Lock()
+
+    # First pass: load cached results
+    to_process: list[tuple[int, ExtractedMethod]] = []
+    for i, method in enumerate(methods):
+        sample_path = samples_dir / f"sample_{i:03d}.json"
+        if sample_path.exists():
+            log.info("[%s] Sample %d/%d already exists, loading (resume)",
+                     mode, i + 1, len(methods))
+            try:
+                results_by_idx[i] = load_sample_result(sample_path)
+                completed += 1
+                continue
+            except Exception as e:
+                log.warning("Failed to load existing sample %s, recomputing: %s",
+                            sample_path, e)
+        to_process.append((i, method))
+
+    if not to_process:
+        update_progress(mode_dir, mode, completed, len(methods))
+        return [results_by_idx[i] for i in sorted(results_by_idx)]
+
+    log.info("[%s] %d samples cached, %d to compute (max_workers=%d)",
+             mode, completed, len(to_process), max_workers)
+
+    def _process_and_write(i: int, method: ExtractedMethod) -> tuple[int, SampleResult | None]:
+        nonlocal completed
+        sample_path = samples_dir / f"sample_{i:03d}.json"
+        try:
+            result = process_sample(method, mode, config, classpath, i, len(methods))
+            write_sample_result(
+                result, sample_path,
+                save_prompts=config.output.save_prompts,
+                save_responses=config.output.save_responses,
+            )
+            with progress_lock:
+                completed += 1
+                update_progress(mode_dir, mode, completed, len(methods))
+            return i, result
+        except Exception as e:
+            log.error("Failed to process sample %d (%s#%s): %s",
+                      i, method.class_fqn, method.method_name, e)
+            return i, None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_process_and_write, i, method): i
+            for i, method in to_process
+        }
+        for future in as_completed(futures):
+            i, result = future.result()
+            if result is not None:
+                results_by_idx[i] = result
+
+    return [results_by_idx[i] for i in sorted(results_by_idx)]
+
+
 def run_experiment(config: Config) -> None:
     log.info("=== Starting Experiment ===")
     log.info("Config: %s", json.dumps(config.to_dict(), indent=2, default=str))
@@ -123,6 +236,7 @@ def run_experiment(config: Config) -> None:
     log.info("Dataset: %d methods, %d classpath entries", len(methods), len(classpath))
 
     output_dir = Path(config.output.dir)
+    max_concurrent = config.llm.max_concurrent_requests
     all_results: dict[str, list[SampleResult]] = {}
 
     for mode in config.experiment.modes:
@@ -131,38 +245,14 @@ def run_experiment(config: Config) -> None:
         samples_dir = mode_dir / "samples"
         samples_dir.mkdir(parents=True, exist_ok=True)
 
-        mode_results: list[SampleResult] = []
-        completed = 0
-
-        for i, method in enumerate(methods):
-            sample_path = samples_dir / f"sample_{i:03d}.json"
-
-            if sample_path.exists():
-                log.info("[%s] Sample %d/%d already exists, loading (resume)",
-                         mode, i + 1, len(methods))
-                try:
-                    result = load_sample_result(sample_path)
-                    mode_results.append(result)
-                    completed += 1
-                    continue
-                except Exception as e:
-                    log.warning("Failed to load existing sample %s, recomputing: %s",
-                                sample_path, e)
-
-            try:
-                result = process_sample(method, mode, config, classpath, i, len(methods))
-                write_sample_result(
-                    result, sample_path,
-                    save_prompts=config.output.save_prompts,
-                    save_responses=config.output.save_responses,
-                )
-                mode_results.append(result)
-                completed += 1
-            except Exception as e:
-                log.error("Failed to process sample %d (%s#%s): %s",
-                          i, method.class_fqn, method.method_name, e)
-
-            update_progress(mode_dir, mode, completed, len(methods))
+        if max_concurrent > 1:
+            mode_results = _run_mode_concurrent(
+                methods, mode, config, classpath, samples_dir, mode_dir, max_concurrent,
+            )
+        else:
+            mode_results = _run_mode_sequential(
+                methods, mode, config, classpath, samples_dir, mode_dir,
+            )
 
         all_results[mode] = mode_results
         log.info("Mode %s: %d/%d samples completed", mode, len(mode_results), len(methods))

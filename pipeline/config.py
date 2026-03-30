@@ -39,6 +39,7 @@ class LLMConfig:
     num_generations: int
     seed: int
     timeout_seconds: int
+    max_concurrent_requests: int = 1
 
 
 @dataclass
