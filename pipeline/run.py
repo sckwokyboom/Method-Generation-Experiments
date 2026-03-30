@@ -79,7 +79,11 @@ def process_sample(
 
     compilability = None
     if config.compilability.enabled:
-        compilability = check_compilability(method, completion.text, classpath)
+        compilability = check_compilability(
+            method, completion.text, classpath,
+            java_home=config.compilability.java_home,
+            source_version=config.compilability.source_version,
+        )
 
     method_id = f"{method.class_fqn}#{method.method_name}"
 

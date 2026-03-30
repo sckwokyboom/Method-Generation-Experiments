@@ -43,6 +43,8 @@ experiment:
 compilability:
   enabled: true
   mode: "file"  # file | project
+  source_version: "17"
+  # java_home: "/path/to/jdk-17"  # optional, uses system javac if not set
 
 output:
   dir: "./results"

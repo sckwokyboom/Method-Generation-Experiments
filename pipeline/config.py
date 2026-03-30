@@ -52,6 +52,8 @@ class ExperimentConfig:
 class CompilabilityConfig:
     enabled: bool
     mode: str  # "file" | "project"
+    source_version: str = "21"
+    java_home: str | None = None
 
 
 @dataclass
