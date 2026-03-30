@@ -17,6 +17,9 @@ def compute_codebleu(generated: str, reference: str) -> float | None:
     if _CODEBLEU_AVAILABLE is False:
         return None
 
+    if not generated or not generated.strip() or not reference or not reference.strip():
+        return None
+
     try:
         from codebleu import calc_codebleu
 
