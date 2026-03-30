@@ -28,11 +28,18 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
     if config.seed is not None:
         payload["seed"] = config.seed
 
+    timeout = httpx.Timeout(
+        connect=10.0,
+        read=float(config.timeout_seconds),
+        write=30.0,
+        pool=10.0,
+    )
+
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
             start_time = time.monotonic()
-            with httpx.Client(timeout=config.timeout_seconds) as client:
+            with httpx.Client(timeout=timeout, proxy=None) as client:
                 response = client.post(
                     config.endpoint_url,
                     json=payload,
@@ -54,6 +61,17 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
                 latency_ms=latency_ms,
                 raw_response=data,
             )
+        except httpx.HTTPStatusError as e:
+            last_error = e
+            log.error("HTTP %d from %s | headers: %s | body: %.500s",
+                       e.response.status_code, config.endpoint_url,
+                       dict(e.response.headers), e.response.text)
+            if attempt < MAX_RETRIES - 1:
+                wait = BACKOFF_BASE ** attempt
+                log.warning("Retrying in %.1fs (attempt %d/%d)", wait, attempt + 1, MAX_RETRIES)
+                time.sleep(wait)
+            else:
+                log.error("LLM request failed after %d attempts", MAX_RETRIES)
         except (httpx.HTTPError, KeyError, IndexError) as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
