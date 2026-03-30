@@ -87,11 +87,11 @@ public class ExtractorCli implements Callable<Integer> {
         Path gradlew = projectPath.resolve(isWindows ? "gradlew.bat" : "gradlew");
         List<String> command;
         if (Files.exists(gradlew)) {
-            command = List.of(gradlew.toAbsolutePath().toString(), "build", "-x", "test", "-x", "shadowJar");
+            command = List.of(gradlew.toAbsolutePath().toString(), "compileJava");
         } else if (Files.exists(projectPath.resolve("pom.xml"))) {
             command = List.of("mvn", "compile", "-DskipTests");
         } else {
-            command = List.of("gradle", "build", "-x", "test", "-x", "shadowJar");
+            command = List.of("gradle", "compileJava");
         }
 
         try {
