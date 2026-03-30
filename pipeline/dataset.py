@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 
 def load_extraction(path: str | Path) -> ExtractionData:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     return ExtractionData.from_dict(raw)
 
@@ -65,7 +65,7 @@ def build_dataset(config: Config) -> tuple[list[ExtractedMethod], list[str]]:
 
     dataset_path = Path(config.dataset.output)
     dataset_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(dataset_path, "w") as f:
+    with open(dataset_path, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "sample_count": len(sampled),
