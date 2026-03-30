@@ -43,7 +43,10 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
                 response = client.post(
                     config.endpoint_url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
                 )
             latency_ms = (time.monotonic() - start_time) * 1000
 
