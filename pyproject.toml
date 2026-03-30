@@ -15,3 +15,4 @@ dependencies = [
 
 [project.scripts]
 mgx = "pipeline.run:main"
+mgx-viewer = "pipeline.viewer:main"
