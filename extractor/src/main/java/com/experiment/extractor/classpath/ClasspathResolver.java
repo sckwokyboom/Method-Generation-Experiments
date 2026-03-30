@@ -80,16 +80,22 @@ public class ClasspathResolver {
         try {
             initScript = Files.createTempFile("extractor-init", ".gradle");
             Files.writeString(initScript, """
+                    def collectedClasspaths = []
                     allprojects {
-                        afterEvaluate {
-                            if (plugins.hasPlugin('java')) {
-                                tasks.register('extractorPrintClasspath') {
-                                    doLast {
-                                        def sourceSets = project.extensions.findByName('sourceSets')
-                                        if (sourceSets != null && sourceSets.findByName('main') != null) {
-                                            println 'EXTRACTOR_CLASSPATH=' + sourceSets.main.compileClasspath.asPath
-                                        }
-                                    }
+                        afterEvaluate { proj ->
+                            if (proj.plugins.hasPlugin('java')) {
+                                def sourceSets = proj.extensions.findByName('sourceSets')
+                                if (sourceSets != null && sourceSets.findByName('main') != null) {
+                                    collectedClasspaths.add(sourceSets.main.compileClasspath)
+                                }
+                            }
+                        }
+                    }
+                    gradle.projectsEvaluated {
+                        rootProject.tasks.register('extractorPrintClasspath') {
+                            doLast {
+                                collectedClasspaths.each { cp ->
+                                    println 'EXTRACTOR_CLASSPATH=' + cp.asPath
                                 }
                             }
                         }
@@ -121,13 +127,20 @@ public class ClasspathResolver {
                 return List.of();
             }
 
-            List<Path> entries = new ArrayList<>();
+            Set<Path> entries = new LinkedHashSet<>();
+            int classpathLineCount = 0;
             for (String line : stdout.lines().toList()) {
                 if (line.startsWith("EXTRACTOR_CLASSPATH=")) {
+                    classpathLineCount++;
                     entries.addAll(splitClasspath(line.substring("EXTRACTOR_CLASSPATH=".length())));
                 }
             }
-            return entries;
+            log.info("Found {} EXTRACTOR_CLASSPATH lines from {} subprojects, {} unique entries",
+                    classpathLineCount, classpathLineCount, entries.size());
+            if (classpathLineCount == 0) {
+                warnings.add("No EXTRACTOR_CLASSPATH output from Gradle. Is the 'java' plugin applied?");
+            }
+            return new ArrayList<>(entries);
         } catch (IOException | InterruptedException e) {
             Thread.currentThread().interrupt();
             warnings.add("Gradle classpath resolution failed: " + e.getMessage());
