@@ -81,6 +81,10 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
     compilable = [s for s in samples if s.compilability is not None]
     comp_values = [1 if s.compilability.success else 0 for s in compilable]
 
+    recall_values = [s.metrics.recall_at_k for s in samples if s.metrics.recall_at_k is not None]
+    api_cov_values = [s.metrics.api_coverage_at_k for s in samples if s.metrics.api_coverage_at_k is not None]
+    mrr_values = [s.metrics.mrr for s in samples if s.metrics.mrr is not None]
+
     def stats(values: list[float]) -> dict:
         if not values:
             return {"mean": 0.0, "median": 0.0, "std": 0.0}
@@ -101,6 +105,9 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
         "lcs_no_ident_ratio": stats(lcs_no_ident_ratio_values) if lcs_no_ident_ratio_values else None,
         "codebleu": stats(codebleu_values) if codebleu_values else None,
         "compilable": stats(comp_values) if comp_values else None,
+        "recall_at_k": stats(recall_values) if recall_values else None,
+        "api_coverage_at_k": stats(api_cov_values) if api_cov_values else None,
+        "mrr": stats(mrr_values) if mrr_values else None,
     }
 
 
@@ -110,7 +117,8 @@ def generate_comparison_table(all_results: dict[str, list[SampleResult]]) -> str
     headers = ["Metric"] + list(all_results.keys())
     rows = []
 
-    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable"]:
+    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu",
+                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr"]:
         row = [metric_name]
         for mode in all_results:
             agg = aggregates[mode].get(metric_name)
@@ -288,7 +296,8 @@ def generate_markdown_report(
     # Key findings
     lines.append("### Key Findings")
     lines.append("")
-    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable"]:
+    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu",
+                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr"]:
         best_mode = None
         best_val = -1.0
         for mode in modes:
@@ -312,7 +321,9 @@ def generate_markdown_report(
         lines.append("")
         lines.append("| Metric | Mean | Median | Std |")
         lines.append("|--------|------|--------|-----|")
-        for metric_name in ["em", "es", "iou", "lcs_length", "lcs_ratio", "lcs_no_ident_length", "lcs_no_ident_ratio", "codebleu", "compilable"]:
+        for metric_name in ["em", "es", "iou", "lcs_length", "lcs_ratio", "lcs_no_ident_length",
+                            "lcs_no_ident_ratio", "codebleu", "compilable",
+                            "recall_at_k", "api_coverage_at_k", "mrr"]:
             m = agg.get(metric_name)
             if m is None:
                 lines.append(f"| {metric_name} | N/A | N/A | N/A |")

@@ -43,6 +43,18 @@ class LLMConfig:
 
 
 @dataclass
+class RetrievalConfig:
+    retriever_jar: str
+    index_dir: str
+    top_k: int = 5
+    max_augmentation_tokens: int = 2048
+    max_results_in_prompt: int = 5
+    max_body_lines: int = 50
+    include_body: bool = True
+    near_duplicate_threshold: float = 0.8
+
+
+@dataclass
 class ExperimentConfig:
     modes: list[str]
     shuffle_seed: int
@@ -72,11 +84,16 @@ class Config:
     experiment: ExperimentConfig
     compilability: CompilabilityConfig
     output: OutputConfig
+    retrieval: RetrievalConfig | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
         with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
+
+        retrieval = None
+        if "retrieval" in raw:
+            retrieval = RetrievalConfig(**raw["retrieval"])
 
         return cls(
             project=ProjectConfig(**raw["project"]),
@@ -86,6 +103,7 @@ class Config:
             experiment=ExperimentConfig(**raw["experiment"]),
             compilability=CompilabilityConfig(**raw["compilability"]),
             output=OutputConfig(**raw["output"]),
+            retrieval=retrieval,
         )
 
     def to_dict(self) -> dict:

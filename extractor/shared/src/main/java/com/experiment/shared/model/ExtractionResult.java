@@ -1,6 +1,7 @@
-package com.experiment.extractor.model;
+package com.experiment.shared.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 public record ExtractionResult(

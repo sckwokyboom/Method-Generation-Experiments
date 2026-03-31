@@ -13,11 +13,14 @@ from pipeline.compilability import check_compilability
 from pipeline.config import Config
 from pipeline.dataset import build_dataset, load_extraction
 from pipeline.llm import generate_completion
-from pipeline.metrics import compute_all_metrics
-from pipeline.models import ExtractedMethod, SampleResult
+from pipeline.metrics import (
+    compute_all_metrics, invocation_recall_at_k, api_coverage_at_k, mrr_for_similar_method,
+)
+from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult, SampleResult
 from pipeline.normalize import normalize_code
 from pipeline.prompt import build_fim_prompt
 from pipeline.report import generate_report, load_sample_result, update_progress, write_sample_result
+from pipeline.retrieval import build_index, build_search_request, format_retrieval_augmentation, search_batch
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,11 +67,16 @@ def process_sample(
     classpath: list[str],
     sample_idx: int,
     total: int,
+    retrieval_response: RetrievalResponse | None = None,
 ) -> SampleResult:
     log.info("[%s] Processing sample %d/%d: %s#%s",
              mode, sample_idx + 1, total, method.class_fqn, method.method_name)
 
-    fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed)
+    retrieval_aug = None
+    if mode == "retrieval_augmentation" and retrieval_response and config.retrieval:
+        retrieval_aug = format_retrieval_augmentation(retrieval_response, config.retrieval)
+
+    fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
 
     completion = generate_completion(fim_prompt.full_prompt, config.llm)
 
@@ -76,6 +84,14 @@ def process_sample(
     norm_ref = normalize_code(fim_prompt.ground_truth, identifier_unify=True)
 
     metrics = compute_all_metrics(completion.text, fim_prompt.ground_truth, identifier_unify=True)
+
+    # Compute retrieval-oriented metrics
+    if retrieval_response and retrieval_response.results:
+        aug_text = retrieval_aug or ""
+        metrics.recall_at_k = invocation_recall_at_k(aug_text, method.invocations)
+        retrieval_results_objs = retrieval_response.results
+        metrics.api_coverage_at_k = api_coverage_at_k(retrieval_results_objs, method.invocations)
+        metrics.mrr = mrr_for_similar_method(retrieval_results_objs, fim_prompt.ground_truth)
 
     compilability = None
     if config.compilability.enabled:
@@ -95,6 +111,12 @@ def process_sample(
         {"order_index": inv.order_index, "signature": inv.signature, "resolution_mode": inv.resolution_mode}
         for inv in fim_prompt.invocations_as_used
     ]
+
+    retrieval_results_dicts = None
+    retrieval_query = None
+    if retrieval_response:
+        retrieval_results_dicts = [r.to_dict() for r in retrieval_response.results]
+        retrieval_query = retrieval_response.query_debug
 
     return SampleResult(
         method_id=method_id,
@@ -116,6 +138,8 @@ def process_sample(
             "usage": completion.usage,
             "latency_ms": round(completion.latency_ms, 1),
         },
+        retrieval_results=retrieval_results_dicts,
+        retrieval_query=retrieval_query,
     )
 
 
@@ -126,6 +150,7 @@ def _run_mode_sequential(
     classpath: list[str],
     samples_dir: Path,
     mode_dir: Path,
+    retrieval_responses: list[RetrievalResponse | None] | None = None,
 ) -> list[SampleResult]:
     results_by_idx: dict[int, SampleResult] = {}
     completed = 0
@@ -144,8 +169,9 @@ def _run_mode_sequential(
                 log.warning("Failed to load existing sample %s, recomputing: %s",
                             sample_path, e)
 
+        ret_resp = retrieval_responses[i] if retrieval_responses else None
         try:
-            result = process_sample(method, mode, config, classpath, i, len(methods))
+            result = process_sample(method, mode, config, classpath, i, len(methods), ret_resp)
             write_sample_result(
                 result, sample_path,
                 save_prompts=config.output.save_prompts,
@@ -170,6 +196,7 @@ def _run_mode_concurrent(
     samples_dir: Path,
     mode_dir: Path,
     max_workers: int,
+    retrieval_responses: list[RetrievalResponse | None] | None = None,
 ) -> list[SampleResult]:
     results_by_idx: dict[int, SampleResult] = {}
     completed = 0
@@ -201,8 +228,9 @@ def _run_mode_concurrent(
     def _process_and_write(i: int, method: ExtractedMethod) -> tuple[int, SampleResult | None]:
         nonlocal completed
         sample_path = samples_dir / f"sample_{i:03d}.json"
+        ret_resp = retrieval_responses[i] if retrieval_responses else None
         try:
-            result = process_sample(method, mode, config, classpath, i, len(methods))
+            result = process_sample(method, mode, config, classpath, i, len(methods), ret_resp)
             write_sample_result(
                 result, sample_path,
                 save_prompts=config.output.save_prompts,
@@ -239,6 +267,19 @@ def run_experiment(config: Config) -> None:
     methods, classpath = build_dataset(config)
     log.info("Dataset: %d methods, %d classpath entries", len(methods), len(classpath))
 
+    # Build retrieval index if needed
+    has_retrieval = "retrieval_augmentation" in config.experiment.modes
+    retrieval_responses: list[RetrievalResponse | None] | None = None
+    if has_retrieval:
+        if config.retrieval is None:
+            raise ValueError("retrieval_augmentation mode requires 'retrieval' section in config")
+        build_index(config)
+
+        # Batch search for all samples
+        log.info("=== Building retrieval queries for %d samples ===", len(methods))
+        requests = [build_search_request(m, config) for m in methods]
+        retrieval_responses = search_batch(requests, config)
+
     output_dir = Path(config.output.dir)
     max_concurrent = config.llm.max_concurrent_requests
     all_results: dict[str, list[SampleResult]] = {}
@@ -249,13 +290,17 @@ def run_experiment(config: Config) -> None:
         samples_dir = mode_dir / "samples"
         samples_dir.mkdir(parents=True, exist_ok=True)
 
+        mode_retrieval = retrieval_responses if mode == "retrieval_augmentation" else None
+
         if max_concurrent > 1:
             mode_results = _run_mode_concurrent(
                 methods, mode, config, classpath, samples_dir, mode_dir, max_concurrent,
+                mode_retrieval,
             )
         else:
             mode_results = _run_mode_sequential(
                 methods, mode, config, classpath, samples_dir, mode_dir,
+                mode_retrieval,
             )
 
         all_results[mode] = mode_results

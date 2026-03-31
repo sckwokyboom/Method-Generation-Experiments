@@ -19,6 +19,31 @@ class ResolvedInvocation:
 
 
 @dataclass
+class ClassField:
+    name: str
+    type_fqn: str
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ClassField:
+        return cls(name=d["name"], type_fqn=d["typeFqn"])
+
+
+@dataclass
+class SiblingMethod:
+    signature: str
+    invocations: list[ResolvedInvocation]
+    used_types: list[str]
+
+    @classmethod
+    def from_dict(cls, d: dict) -> SiblingMethod:
+        return cls(
+            signature=d["signature"],
+            invocations=[ResolvedInvocation.from_dict(inv) for inv in d.get("invocations", [])],
+            used_types=d.get("usedTypes", []),
+        )
+
+
+@dataclass
 class ExtractedMethod:
     file_path: str
     file_content: str
@@ -31,6 +56,14 @@ class ExtractedMethod:
     statement_count: int
     category: str
     invocations: list[ResolvedInvocation]
+    imports: list[str] = field(default_factory=list)
+    class_fields: list[ClassField] = field(default_factory=list)
+    supertypes: list[str] = field(default_factory=list)
+    sibling_methods: list[SiblingMethod] = field(default_factory=list)
+    return_type: str | None = None
+    parameter_types: list[str] = field(default_factory=list)
+    thrown_exceptions: list[str] = field(default_factory=list)
+    used_types: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict) -> ExtractedMethod:
@@ -46,6 +79,14 @@ class ExtractedMethod:
             statement_count=d["statementCount"],
             category=d["category"],
             invocations=[ResolvedInvocation.from_dict(inv) for inv in d.get("invocations", [])],
+            imports=d.get("imports", []),
+            class_fields=[ClassField.from_dict(f) for f in d.get("classFields", [])],
+            supertypes=d.get("supertypes", []),
+            sibling_methods=[SiblingMethod.from_dict(s) for s in d.get("siblingMethods", [])],
+            return_type=d.get("returnType"),
+            parameter_types=d.get("parameterTypes", []),
+            thrown_exceptions=d.get("thrownExceptions", []),
+            used_types=d.get("usedTypes", []),
         )
 
 
@@ -84,6 +125,69 @@ class CompletionResult:
 
 
 @dataclass
+class RetrievalResult:
+    method_id: str
+    file_path: str
+    class_fqn: str
+    signature: str
+    method_body: str
+    method_card: str
+    invocation_profile: str
+    type_profile: str
+    score: float
+    rank: int
+    explain: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RetrievalResult:
+        return cls(
+            method_id=d.get("id", ""),
+            file_path=d.get("filePath", ""),
+            class_fqn=d.get("classFqn", ""),
+            signature=d.get("signature", ""),
+            method_body=d.get("methodBody", ""),
+            method_card=d.get("methodCard", ""),
+            invocation_profile=d.get("invocationProfile", ""),
+            type_profile=d.get("typeProfile", ""),
+            score=d.get("score", 0.0),
+            rank=d.get("rank", 0),
+            explain=d.get("explain", ""),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.method_id,
+            "filePath": self.file_path,
+            "classFqn": self.class_fqn,
+            "signature": self.signature,
+            "methodBody": self.method_body,
+            "methodCard": self.method_card,
+            "invocationProfile": self.invocation_profile,
+            "typeProfile": self.type_profile,
+            "score": self.score,
+            "rank": self.rank,
+            "explain": self.explain,
+        }
+
+
+@dataclass
+class RetrievalResponse:
+    results: list[RetrievalResult]
+    total_hits: int
+    search_time_ms: float
+    query_debug: str
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RetrievalResponse:
+        return cls(
+            results=[RetrievalResult.from_dict(r) for r in d.get("results", [])],
+            total_hits=d.get("totalHits", 0),
+            search_time_ms=d.get("searchTimeMs", 0),
+            query_debug=d.get("queryDebug", ""),
+        )
+
+
+@dataclass
 class MetricsResult:
     em: bool
     es: float
@@ -93,6 +197,9 @@ class MetricsResult:
     lcs_no_ident_length: int | None = None
     lcs_no_ident_ratio: float | None = None
     codebleu: float | None = None
+    recall_at_k: float | None = None
+    api_coverage_at_k: float | None = None
+    mrr: float | None = None
 
 
 @dataclass
@@ -119,9 +226,11 @@ class SampleResult:
     metrics: MetricsResult
     compilability: CompilabilityResult | None
     llm_response: dict
+    retrieval_results: list[dict] | None = None
+    retrieval_query: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "method_id": self.method_id,
             "file_path": self.file_path,
             "mode": self.mode,
@@ -143,12 +252,20 @@ class SampleResult:
                 "lcs_no_ident_length": self.metrics.lcs_no_ident_length,
                 "lcs_no_ident_ratio": self.metrics.lcs_no_ident_ratio,
                 "codebleu": self.metrics.codebleu,
+                "recall_at_k": self.metrics.recall_at_k,
+                "api_coverage_at_k": self.metrics.api_coverage_at_k,
+                "mrr": self.metrics.mrr,
                 "compilable": self.compilability.success if self.compilability else None,
                 "compile_errors": self.compilability.error_messages if self.compilability else [],
                 "compile_exit_code": self.compilability.exit_code if self.compilability else None,
             },
             "llm_response": self.llm_response,
         }
+        if self.retrieval_results is not None:
+            d["retrieval_results"] = self.retrieval_results
+        if self.retrieval_query is not None:
+            d["retrieval_query"] = self.retrieval_query
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> SampleResult:
@@ -162,6 +279,9 @@ class SampleResult:
             lcs_no_ident_length=metrics_d.get("lcs_no_ident_length"),
             lcs_no_ident_ratio=metrics_d.get("lcs_no_ident_ratio"),
             codebleu=metrics_d.get("codebleu"),
+            recall_at_k=metrics_d.get("recall_at_k"),
+            api_coverage_at_k=metrics_d.get("api_coverage_at_k"),
+            mrr=metrics_d.get("mrr"),
         )
         comp = None
         if metrics_d.get("compilable") is not None:
@@ -186,4 +306,6 @@ class SampleResult:
             metrics=metrics,
             compilability=comp,
             llm_response=d.get("llm_response", {}),
+            retrieval_results=d.get("retrieval_results"),
+            retrieval_query=d.get("retrieval_query"),
         )

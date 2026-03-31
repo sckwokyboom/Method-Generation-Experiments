@@ -15,8 +15,9 @@ from pathlib import Path
 
 from pipeline.config import Config
 from pipeline.dataset import build_dataset, load_extraction
-from pipeline.models import ExtractedMethod
+from pipeline.models import ExtractedMethod, RetrievalResponse
 from pipeline.prompt import build_fim_prompt
+from pipeline.retrieval import build_index, build_search_request, search_batch, format_retrieval_augmentation
 
 logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger(__name__)
@@ -53,6 +54,8 @@ def print_sample(
     total: int,
     modes: list[str],
     shuffle_seed: int,
+    retrieval_response: RetrievalResponse | None = None,
+    retrieval_config=None,
 ) -> None:
     header(
         f"SAMPLE {sample_idx + 1}/{total}  │  {method.class_fqn}#{method.method_name}",
@@ -87,10 +90,37 @@ def print_sample(
                 f"{inv.signature}"
             )
 
+    # ── Retrieval results (if available) ─────────────────────────────────────
+    if retrieval_response and retrieval_response.results:
+        section(f"RETRIEVAL RESULTS ({len(retrieval_response.results)} hits, {retrieval_response.search_time_ms}ms)", color=CYAN)
+        for r in retrieval_response.results:
+            print(
+                f"  {BOLD}#{r.rank}{RESET}  "
+                f"{YELLOW}score={r.score:.2f}{RESET}  "
+                f"{GREEN}{r.signature}{RESET}"
+            )
+            print(f"    {DIM}{r.class_fqn} | {r.file_path}{RESET}")
+            if r.invocation_profile:
+                inv_lines = [l.strip() for l in r.invocation_profile.split("\n")
+                             if l.strip() and not l.strip().startswith("bigram:") and not l.strip().startswith("trigram:")]
+                if inv_lines:
+                    print(f"    {DIM}Invocations: {', '.join(inv_lines[:4])}{RESET}")
+            print()
+
+        if retrieval_response.query_debug:
+            section("LUCENE QUERY", color=DIM)
+            for line in textwrap.wrap(retrieval_response.query_debug, width=120):
+                print(f"  {DIM}{line}{RESET}")
+
     # ── Prompts per mode ──────────────────────────────────────────────────────
     for mode in modes:
         section(f"PROMPT  ({mode})", color=YELLOW)
-        fim = build_fim_prompt(method, mode, shuffle_seed)
+
+        retrieval_aug = None
+        if mode == "retrieval_augmentation" and retrieval_response and retrieval_config:
+            retrieval_aug = format_retrieval_augmentation(retrieval_response, retrieval_config)
+
+        fim = build_fim_prompt(method, mode, shuffle_seed, retrieval_aug)
 
         if fim.augmentation_block:
             print(f"  {DIM}Augmentation block:{RESET}")
@@ -169,16 +199,37 @@ def main():
         to_show = methods[:count]
         start_idx = 0
 
+    # Build retrieval responses if retrieval_augmentation mode is requested
+    retrieval_responses: list[RetrievalResponse | None] = [None] * len(methods)
+    has_retrieval = "retrieval_augmentation" in modes
+    if has_retrieval:
+        if config.retrieval is None:
+            print(f"{RED}ERROR: retrieval_augmentation mode requires 'retrieval' section in config{RESET}")
+            return
+        try:
+            build_index(config)
+            indices = [start_idx + i for i in range(len(to_show))]
+            requests = [build_search_request(methods[idx], config) for idx in indices]
+            responses = search_batch(requests, config)
+            for j, idx in enumerate(indices):
+                retrieval_responses[idx] = responses[j]
+        except Exception as e:
+            print(f"{RED}WARNING: Retrieval failed: {e}{RESET}")
+            print(f"{DIM}Continuing without retrieval results...{RESET}\n")
+
     print(f"\n{BOLD}Dataset: {len(methods)} methods sampled{RESET}")
     print(f"Showing: {len(to_show)} sample(s) | Modes: {', '.join(modes)}\n")
 
     for i, method in enumerate(to_show):
+        idx = start_idx + i
         print_sample(
             method,
-            sample_idx=start_idx + i,
+            sample_idx=idx,
             total=len(methods),
             modes=modes,
             shuffle_seed=config.experiment.shuffle_seed,
+            retrieval_response=retrieval_responses[idx],
+            retrieval_config=config.retrieval,
         )
 
     if args.json and to_show:

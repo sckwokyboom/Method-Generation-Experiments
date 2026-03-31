@@ -1,4 +1,4 @@
-package com.experiment.extractor.model;
+package com.experiment.shared.model;
 
 public enum MethodCategory {
     NORMAL,

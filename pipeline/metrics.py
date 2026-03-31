@@ -5,7 +5,7 @@ from collections import Counter
 import Levenshtein
 
 from pipeline.codebleu_metric import compute_codebleu
-from pipeline.models import MetricsResult
+from pipeline.models import MetricsResult, ResolvedInvocation, RetrievalResult
 from pipeline.normalize import normalize_code, tokenize_code
 from pipeline.strip_identifiers import strip_identifiers_and_literals
 
@@ -106,3 +106,99 @@ def compute_all_metrics(
         lcs_no_ident_ratio=lcs_no_ident_len / max_stripped_len if max_stripped_len > 0 else 1.0,
         codebleu=codebleu_score,
     )
+
+
+def _parse_invocation_key(signature: str) -> tuple[str, str]:
+    """Extract (ownerType, methodName) from 'com.example.Foo::bar(int) -> void'."""
+    parts = signature.split("::", 1)
+    if len(parts) != 2:
+        return (signature, "")
+    owner = parts[0]
+    rest = parts[1]
+    paren_idx = rest.find("(")
+    method_name = rest[:paren_idx] if paren_idx > 0 else rest
+    return (owner, method_name)
+
+
+def invocation_recall_at_k(
+    retrieved_text: str,
+    oracle_invocations: list[ResolvedInvocation],
+) -> float:
+    """Fraction of oracle invocation signatures whose key parts appear in retrieved text."""
+    if not oracle_invocations:
+        return 1.0
+    if not retrieved_text:
+        return 0.0
+
+    text_lower = retrieved_text.lower()
+    found = 0
+    for inv in oracle_invocations:
+        if inv.resolution_mode != "EXACT":
+            continue
+        owner, method_name = _parse_invocation_key(inv.signature)
+        # Check if both owner simple name and method name appear
+        owner_simple = owner.rsplit(".", 1)[-1].lower()
+        if owner_simple in text_lower and method_name.lower() in text_lower:
+            found += 1
+
+    exact_count = sum(1 for inv in oracle_invocations if inv.resolution_mode == "EXACT")
+    return found / exact_count if exact_count > 0 else 1.0
+
+
+def api_coverage_at_k(
+    retrieval_results: list[RetrievalResult],
+    oracle_invocations: list[ResolvedInvocation],
+) -> float:
+    """Fraction of needed (ownerType, methodName) pairs recovered across all retrieved methods."""
+    if not oracle_invocations:
+        return 1.0
+
+    needed = set()
+    for inv in oracle_invocations:
+        if inv.resolution_mode == "EXACT":
+            needed.add(_parse_invocation_key(inv.signature))
+
+    if not needed:
+        return 1.0
+
+    # Collect all invocation keys from retrieved method cards and invocation profiles
+    found = set()
+    for result in retrieval_results:
+        combined = (result.method_card or "") + " " + (result.invocation_profile or "")
+        combined_lower = combined.lower()
+        for owner, method_name in needed:
+            owner_simple = owner.rsplit(".", 1)[-1].lower()
+            if owner_simple in combined_lower and method_name.lower() in combined_lower:
+                found.add((owner, method_name))
+
+    return len(found) / len(needed)
+
+
+def mrr_for_similar_method(
+    retrieval_results: list[RetrievalResult],
+    target_body: str,
+    similarity_threshold: float = 0.3,
+) -> float:
+    """MRR based on token overlap of retrieved method bodies with the target ground truth."""
+    if not retrieval_results or not target_body:
+        return 0.0
+
+    target_tokens = set(tokenize_code(target_body))
+    if not target_tokens:
+        return 0.0
+
+    for result in retrieval_results:
+        if not result.method_body:
+            continue
+        result_tokens = set(tokenize_code(result.method_body))
+        if not result_tokens:
+            continue
+
+        intersection = target_tokens & result_tokens
+        union = target_tokens | result_tokens
+        jaccard = len(intersection) / len(union) if union else 0.0
+
+        if jaccard >= similarity_threshold:
+            return 1.0 / result.rank
+
+    return 0.0

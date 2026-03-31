@@ -1,6 +1,6 @@
 package com.experiment.extractor.analysis;
 
-import com.experiment.extractor.model.MethodCategory;
+import com.experiment.shared.model.MethodCategory;
 import org.eclipse.jdt.core.dom.Annotation;
 import org.eclipse.jdt.core.dom.Assignment;
 import org.eclipse.jdt.core.dom.Block;

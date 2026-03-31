@@ -5,7 +5,7 @@ project:
   fallback_tag: "v0.9.1"
 
 extraction:
-  extractor_jar: "./extractor/build/libs/method-extractor.jar"
+  extractor_jar: "./extractor/extractor-core/build/libs/method-extractor-0.2.0.jar"
   min_statements: 3
   exclude_categories:
     - GETTER
@@ -33,11 +33,22 @@ llm:
   timeout_seconds: 300
   max_concurrent_requests: 4
 
+retrieval:
+  retriever_jar: "./extractor/retriever/build/libs/method-retriever-0.2.0.jar"
+  index_dir: "./results/lucene-index"
+  top_k: 5
+  max_augmentation_tokens: 4096
+  max_results_in_prompt: 5
+  max_body_lines: 50
+  include_body: true
+  near_duplicate_threshold: 0.8
+
 experiment:
   modes:
     - no_augmentation
     - ordered_augmentation
     - shuffled_augmentation
+    - retrieval_augmentation
   shuffle_seed: 42
 
 compilability:

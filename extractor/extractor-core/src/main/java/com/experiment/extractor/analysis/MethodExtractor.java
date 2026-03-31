@@ -1,29 +1,9 @@
 package com.experiment.extractor.analysis;
 
 import com.experiment.extractor.classpath.ClasspathResolver;
-import com.experiment.extractor.model.ExtractionMeta;
-import com.experiment.extractor.model.ExtractionResult;
-import com.experiment.extractor.model.ExtractedMethod;
-import com.experiment.extractor.model.MethodCategory;
-import com.experiment.extractor.model.ResolvedInvocation;
+import com.experiment.shared.model.*;
 import org.eclipse.jdt.core.JavaCore;
-import org.eclipse.jdt.core.dom.AST;
-import org.eclipse.jdt.core.dom.ASTParser;
-import org.eclipse.jdt.core.dom.ASTVisitor;
-import org.eclipse.jdt.core.dom.Block;
-import org.eclipse.jdt.core.dom.ClassInstanceCreation;
-import org.eclipse.jdt.core.dom.CompilationUnit;
-import org.eclipse.jdt.core.dom.ConstructorInvocation;
-import org.eclipse.jdt.core.dom.IMethodBinding;
-import org.eclipse.jdt.core.dom.ITypeBinding;
-import org.eclipse.jdt.core.dom.MethodDeclaration;
-import org.eclipse.jdt.core.dom.MethodInvocation;
-import org.eclipse.jdt.core.dom.SingleVariableDeclaration;
-import org.eclipse.jdt.core.dom.SuperConstructorInvocation;
-import org.eclipse.jdt.core.dom.SuperMethodInvocation;
-import org.eclipse.jdt.core.dom.TypeDeclaration;
-import org.eclipse.jdt.core.dom.EnumDeclaration;
-import org.eclipse.jdt.core.dom.AbstractTypeDeclaration;
+import org.eclipse.jdt.core.dom.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,12 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Stream;
 
 public class MethodExtractor {
@@ -155,14 +130,173 @@ public class MethodExtractor {
         return options;
     }
 
+    @SuppressWarnings("unchecked")
+    private List<String> extractImports(CompilationUnit cu) {
+        List<String> imports = new ArrayList<>();
+        for (Object obj : cu.imports()) {
+            ImportDeclaration imp = (ImportDeclaration) obj;
+            imports.add(imp.getName().getFullyQualifiedName());
+        }
+        return imports;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<ClassField> extractClassFields(TypeDeclaration typeDecl) {
+        List<ClassField> fields = new ArrayList<>();
+        for (FieldDeclaration field : typeDecl.getFields()) {
+            String typeFqn = resolveTypeString(field.getType());
+            for (Object fragObj : field.fragments()) {
+                VariableDeclarationFragment frag = (VariableDeclarationFragment) fragObj;
+                fields.add(new ClassField(frag.getName().getIdentifier(), typeFqn));
+            }
+        }
+        return fields;
+    }
+
+    private List<ClassField> extractEnumFields(EnumDeclaration enumDecl) {
+        // Enums have no getFields() on EnumDeclaration directly; body declarations can contain them
+        List<ClassField> fields = new ArrayList<>();
+        for (Object bodyDecl : enumDecl.bodyDeclarations()) {
+            if (bodyDecl instanceof FieldDeclaration field) {
+                String typeFqn = resolveTypeString(field.getType());
+                for (Object fragObj : field.fragments()) {
+                    VariableDeclarationFragment frag = (VariableDeclarationFragment) fragObj;
+                    fields.add(new ClassField(frag.getName().getIdentifier(), typeFqn));
+                }
+            }
+        }
+        return fields;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractSupertypes(TypeDeclaration typeDecl) {
+        List<String> supertypes = new ArrayList<>();
+        if (typeDecl.getSuperclassType() != null) {
+            supertypes.add(resolveTypeString(typeDecl.getSuperclassType()));
+        }
+        for (Object iface : typeDecl.superInterfaceTypes()) {
+            supertypes.add(resolveTypeString((Type) iface));
+        }
+        return supertypes;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> extractEnumSupertypes(EnumDeclaration enumDecl) {
+        List<String> supertypes = new ArrayList<>();
+        for (Object iface : enumDecl.superInterfaceTypes()) {
+            supertypes.add(resolveTypeString((Type) iface));
+        }
+        return supertypes;
+    }
+
+    private String resolveTypeString(Type type) {
+        if (type == null) return "UNKNOWN";
+        ITypeBinding binding = type.resolveBinding();
+        if (binding != null) {
+            String qname = binding.getQualifiedName();
+            return qname.isEmpty() ? type.toString() : qname;
+        }
+        return type.toString();
+    }
+
+    private List<String> extractUsedTypes(Block body) {
+        Set<String> types = new LinkedHashSet<>();
+        body.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(SimpleType node) {
+                ITypeBinding binding = node.resolveBinding();
+                if (binding != null) {
+                    String qname = binding.getQualifiedName();
+                    if (!qname.isEmpty() && !binding.isPrimitive()) {
+                        types.add(qname);
+                    }
+                } else {
+                    types.add(node.getName().getFullyQualifiedName());
+                }
+                return true;
+            }
+
+            @Override
+            public boolean visit(ClassInstanceCreation node) {
+                ITypeBinding binding = node.getType().resolveBinding();
+                if (binding != null) {
+                    String qname = binding.getQualifiedName();
+                    if (!qname.isEmpty()) types.add(qname);
+                }
+                return true;
+            }
+        });
+        return new ArrayList<>(types);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String resolveReturnType(MethodDeclaration node) {
+        Type returnType = node.getReturnType2();
+        if (returnType == null) return null;
+        ITypeBinding binding = returnType.resolveBinding();
+        if (binding != null) {
+            return formatType(binding);
+        }
+        return returnType.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> resolveParameterTypes(MethodDeclaration node) {
+        List<String> paramTypes = new ArrayList<>();
+        List<SingleVariableDeclaration> params = node.parameters();
+        for (SingleVariableDeclaration param : params) {
+            ITypeBinding binding = param.getType().resolveBinding();
+            if (binding != null) {
+                paramTypes.add(formatType(binding));
+            } else {
+                paramTypes.add(param.getType().toString());
+            }
+        }
+        return paramTypes;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> resolveThrownExceptions(MethodDeclaration node) {
+        List<String> thrown = new ArrayList<>();
+        for (Object exType : node.thrownExceptionTypes()) {
+            Type t = (Type) exType;
+            thrown.add(resolveTypeString(t));
+        }
+        return thrown;
+    }
+
+    private record MethodInfo(
+            MethodDeclaration declaration,
+            String classFqn,
+            MethodCategory category,
+            int stmtCount,
+            int bodyStart,
+            int bodyEnd,
+            String methodBody,
+            String methodSig,
+            List<ResolvedInvocation> invocations,
+            List<String> usedTypes,
+            String returnType,
+            List<String> parameterTypes,
+            List<String> thrownExceptions
+    ) {}
+
     private List<ExtractedMethod> extractMethods(CompilationUnit cu, String source, String filePath, boolean isTestSource) {
-        List<ExtractedMethod> methods = new ArrayList<>();
+        List<String> imports = extractImports(cu);
+        List<ExtractedMethod> result = new ArrayList<>();
         Deque<String> typeStack = new ArrayDeque<>();
 
         cu.accept(new ASTVisitor() {
             @Override
             public boolean visit(TypeDeclaration node) {
-                typeStack.addLast(resolveTypeFqn(node));
+                String fqn = resolveTypeFqn(node);
+                typeStack.addLast(fqn);
+
+                List<ClassField> classFields = extractClassFields(node);
+                List<String> supertypes = extractSupertypes(node);
+
+                processTypeMembers(node.getMethods(), fqn, classFields, supertypes,
+                        source, filePath, isTestSource, cu, imports, result);
                 return true;
             }
 
@@ -173,7 +307,21 @@ public class MethodExtractor {
 
             @Override
             public boolean visit(EnumDeclaration node) {
-                typeStack.addLast(resolveEnumFqn(node));
+                String fqn = resolveEnumFqn(node);
+                typeStack.addLast(fqn);
+
+                List<ClassField> classFields = extractEnumFields(node);
+                List<String> supertypes = extractEnumSupertypes(node);
+
+                // Collect methods from enum body declarations
+                List<MethodDeclaration> enumMethods = new ArrayList<>();
+                for (Object bodyDecl : node.bodyDeclarations()) {
+                    if (bodyDecl instanceof MethodDeclaration md) {
+                        enumMethods.add(md);
+                    }
+                }
+                processTypeMembers(enumMethods.toArray(new MethodDeclaration[0]),
+                        fqn, classFields, supertypes, source, filePath, isTestSource, cu, imports, result);
                 return true;
             }
 
@@ -181,44 +329,82 @@ public class MethodExtractor {
             public void endVisit(EnumDeclaration node) {
                 if (!typeStack.isEmpty()) typeStack.removeLast();
             }
-
-            @Override
-            public boolean visit(MethodDeclaration node) {
-                Block body = node.getBody();
-                if (body == null) return false;
-
-                String classFqn = typeStack.isEmpty() ? "UNKNOWN" : typeStack.peekLast();
-
-                MethodCategory category = MethodClassifier.classify(node, isTestSource);
-                int stmtCount = body.statements().size();
-
-                if (stmtCount < minStatements && category == MethodCategory.NORMAL) {
-                    return false;
-                }
-                if (category != MethodCategory.NORMAL) {
-                    return false;
-                }
-
-                int bodyStart = body.getStartPosition();
-                int bodyEnd = bodyStart + body.getLength();
-
-                String methodBody = source.substring(bodyStart, bodyEnd);
-                String methodSig = buildMethodSignature(node);
-
-                List<ResolvedInvocation> invocations = extractInvocations(body, cu);
-
-                ExtractedMethod extracted = new ExtractedMethod(
-                        filePath, source, classFqn, methodSig,
-                        node.getName().getIdentifier(), methodBody,
-                        bodyStart, bodyEnd, stmtCount, category, invocations
-                );
-
-                methods.add(extracted);
-                return false;
-            }
         });
 
-        return methods;
+        return result;
+    }
+
+    private void processTypeMembers(
+            MethodDeclaration[] methodDecls,
+            String classFqn,
+            List<ClassField> classFields,
+            List<String> supertypes,
+            String source,
+            String filePath,
+            boolean isTestSource,
+            CompilationUnit cu,
+            List<String> imports,
+            List<ExtractedMethod> result
+    ) {
+        // First pass: collect info for all methods (needed for sibling data)
+        List<MethodInfo> allInfos = new ArrayList<>();
+        for (MethodDeclaration node : methodDecls) {
+            Block body = node.getBody();
+            if (body == null) continue;
+
+            MethodCategory category = MethodClassifier.classify(node, isTestSource);
+            int stmtCount = body.statements().size();
+
+            int bodyStart = body.getStartPosition();
+            int bodyEnd = bodyStart + body.getLength();
+            String methodBody = source.substring(bodyStart, bodyEnd);
+            String methodSig = buildMethodSignature(node);
+            List<ResolvedInvocation> invocations = extractInvocations(body, cu);
+            List<String> usedTypes = extractUsedTypes(body);
+            String returnType = resolveReturnType(node);
+            List<String> parameterTypes = resolveParameterTypes(node);
+            List<String> thrownExceptions = resolveThrownExceptions(node);
+
+            allInfos.add(new MethodInfo(
+                    node, classFqn, category, stmtCount,
+                    bodyStart, bodyEnd, methodBody, methodSig,
+                    invocations, usedTypes, returnType, parameterTypes, thrownExceptions
+            ));
+        }
+
+        // Second pass: build ExtractedMethod with sibling info
+        for (int i = 0; i < allInfos.size(); i++) {
+            MethodInfo info = allInfos.get(i);
+
+            if (info.stmtCount < minStatements && info.category == MethodCategory.NORMAL) {
+                continue;
+            }
+            if (info.category != MethodCategory.NORMAL) {
+                continue;
+            }
+
+            // Build sibling methods list (all other methods in same type)
+            List<SiblingMethod> siblings = new ArrayList<>();
+            for (int j = 0; j < allInfos.size(); j++) {
+                if (j == i) continue;
+                MethodInfo sib = allInfos.get(j);
+                siblings.add(new SiblingMethod(
+                        sib.methodSig,
+                        sib.invocations,
+                        sib.usedTypes
+                ));
+            }
+
+            ExtractedMethod extracted = new ExtractedMethod(
+                    filePath, source, classFqn, info.methodSig,
+                    info.declaration.getName().getIdentifier(), info.methodBody,
+                    info.bodyStart, info.bodyEnd, info.stmtCount, info.category, info.invocations,
+                    imports, classFields, supertypes, siblings,
+                    info.returnType, info.parameterTypes, info.thrownExceptions, info.usedTypes
+            );
+
+            result.add(extracted);
+        }
     }
 
     private String resolveTypeFqn(TypeDeclaration node) {

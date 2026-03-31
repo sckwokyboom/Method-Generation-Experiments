@@ -1,7 +1,7 @@
 package com.experiment.extractor.cli;
 
 import com.experiment.extractor.analysis.MethodExtractor;
-import com.experiment.extractor.model.ExtractionResult;
+import com.experiment.shared.model.ExtractionResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.slf4j.Logger;
@@ -13,8 +13,8 @@ import picocli.CommandLine.Option;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.List;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.Callable;
 
 @Command(
