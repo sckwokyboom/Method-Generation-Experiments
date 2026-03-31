@@ -31,6 +31,7 @@ llm:
   num_generations: 1
   seed: 42
   timeout_seconds: 300
+  context_window: 16384
   max_concurrent_requests: 4
 
 retrieval:

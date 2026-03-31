@@ -39,6 +39,7 @@ class LLMConfig:
     num_generations: int
     seed: int
     timeout_seconds: int
+    context_window: int = 0
     max_concurrent_requests: int = 1
 
 

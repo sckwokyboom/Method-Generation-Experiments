@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 import requests
@@ -14,6 +15,20 @@ FIM_TOKENS = {"<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>", "<|fim_pad|>
 
 MAX_RETRIES = 3
 BACKOFF_BASE = 2.0
+
+_CONTEXT_RE = re.compile(
+    r"(\d+)\s*input\s*tokens.*?(\d+)\s*output\s*tokens.*?"
+    r"context\s*length\s*(?:is\s*(?:only\s*)?)?(\d+)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _parse_context_error(body: str) -> tuple[int, int, int] | None:
+    """Parse (prompt_tokens, requested_max, context_length) from an error response."""
+    m = _CONTEXT_RE.search(body)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    return None
 
 
 def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
@@ -59,9 +74,32 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
             )
         except requests.HTTPError as e:
             last_error = e
-            log.error("HTTP %d from %s | headers: %s | body: %.500s",
-                       e.response.status_code, config.endpoint_url,
-                       dict(e.response.headers), e.response.text)
+            resp_body = e.response.text if e.response is not None else ""
+            log.error("HTTP %d from %s | body: %.500s",
+                      e.response.status_code if e.response is not None else 0,
+                      config.endpoint_url, resp_body)
+
+            # Context length exceeded — retry with reduced max_tokens
+            if e.response is not None and e.response.status_code == 400:
+                parsed = _parse_context_error(resp_body)
+                if parsed:
+                    prompt_tokens, _, context_length = parsed
+                    reduced = context_length - prompt_tokens
+                    if reduced > 0:
+                        log.warning(
+                            "Context exceeded: prompt=%d tokens, context=%d. "
+                            "Retrying with max_tokens=%d (was %d).",
+                            prompt_tokens, context_length, reduced, payload["max_tokens"],
+                        )
+                        payload["max_tokens"] = reduced
+                        continue
+                    else:
+                        log.error(
+                            "Prompt (%d tokens) exceeds context window (%d). Cannot generate.",
+                            prompt_tokens, context_length,
+                        )
+                        raise
+
             if attempt < MAX_RETRIES - 1:
                 wait = BACKOFF_BASE ** attempt
                 log.warning("Retrying in %.1fs (attempt %d/%d)", wait, attempt + 1, MAX_RETRIES)

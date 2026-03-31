@@ -21,6 +21,7 @@ from pipeline.normalize import normalize_code
 from pipeline.prompt import build_fim_prompt
 from pipeline.report import generate_report, load_sample_result, update_progress, write_sample_result
 from pipeline.retrieval import build_index, build_search_request, format_retrieval_augmentation, search_batch
+from pipeline.tokenizer import count_tokens
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,11 +73,39 @@ def process_sample(
     log.info("[%s] Processing sample %d/%d: %s#%s",
              mode, sample_idx + 1, total, method.class_fqn, method.method_name)
 
+    # Build retrieval augmentation and apply budget trimming.
+    # effective_retrieval tracks the actual results the model sees (post-trimming),
+    # used for metrics and serialization. Original retrieval_response is never mutated.
     retrieval_aug = None
+    effective_retrieval: RetrievalResponse | None = None
     if mode == "retrieval_augmentation" and retrieval_response and config.retrieval:
-        retrieval_aug = format_retrieval_augmentation(retrieval_response, config.retrieval)
+        effective_retrieval = retrieval_response
+        retrieval_aug = format_retrieval_augmentation(effective_retrieval, config.retrieval)
 
     fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
+
+    # Budget check: if prompt + max_tokens would exceed context_window,
+    # progressively trim augmentation (fewer retrieved methods) until it fits.
+    # When zero methods fit, retrieval_aug becomes "" (not None) so that
+    # build_fim_prompt stays in retrieval_augmentation mode without falling
+    # back to oracle invocation augmentation.
+    context_window = config.llm.context_window
+    if context_window > 0 and effective_retrieval:
+        prompt_tokens = count_tokens(fim_prompt.full_prompt)
+        n_results = len(effective_retrieval.results)
+        while prompt_tokens + config.llm.max_tokens > context_window and n_results > 0:
+            n_results -= 1
+            effective_retrieval = RetrievalResponse(
+                results=retrieval_response.results[:n_results],
+                total_hits=retrieval_response.total_hits,
+                search_time_ms=retrieval_response.search_time_ms,
+                query_debug=retrieval_response.query_debug,
+            )
+            retrieval_aug = format_retrieval_augmentation(effective_retrieval, config.retrieval)
+            fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
+            prompt_tokens = count_tokens(fim_prompt.full_prompt)
+            log.info("[%s] Trimmed augmentation to %d results (%d prompt tokens)",
+                     mode, n_results, prompt_tokens)
 
     completion = generate_completion(fim_prompt.full_prompt, config.llm)
 
@@ -85,13 +114,13 @@ def process_sample(
 
     metrics = compute_all_metrics(completion.text, fim_prompt.ground_truth, identifier_unify=True)
 
-    # Compute retrieval-oriented metrics
-    if retrieval_response and retrieval_response.results:
+    # Compute retrieval-oriented metrics on the effective (post-trim) results,
+    # i.e. exactly what the model actually saw.
+    if effective_retrieval and effective_retrieval.results:
         aug_text = retrieval_aug or ""
         metrics.recall_at_k = invocation_recall_at_k(aug_text, method.invocations)
-        retrieval_results_objs = retrieval_response.results
-        metrics.api_coverage_at_k = api_coverage_at_k(retrieval_results_objs, method.invocations)
-        metrics.mrr = mrr_for_similar_method(retrieval_results_objs, fim_prompt.ground_truth)
+        metrics.api_coverage_at_k = api_coverage_at_k(effective_retrieval.results, method.invocations)
+        metrics.mrr = mrr_for_similar_method(effective_retrieval.results, fim_prompt.ground_truth)
 
     compilability = None
     if config.compilability.enabled:
@@ -112,11 +141,12 @@ def process_sample(
         for inv in fim_prompt.invocations_as_used
     ]
 
+    # Serialize the effective (post-trim) retrieval, not the original.
     retrieval_results_dicts = None
     retrieval_query = None
-    if retrieval_response:
-        retrieval_results_dicts = [r.to_dict() for r in retrieval_response.results]
-        retrieval_query = retrieval_response.query_debug
+    if effective_retrieval:
+        retrieval_results_dicts = [r.to_dict() for r in effective_retrieval.results]
+        retrieval_query = effective_retrieval.query_debug
 
     return SampleResult(
         method_id=method_id,

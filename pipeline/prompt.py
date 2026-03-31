@@ -85,8 +85,11 @@ def build_fim_prompt(
     suffix = file_content[body_end:]
     ground_truth = file_content[body_start + 1 : body_end]
 
-    if mode == "retrieval_augmentation" and retrieval_augmentation:
-        aug_block = retrieval_augmentation
+    if mode == "retrieval_augmentation":
+        # retrieval_augmentation is not None when the caller is in retrieval mode
+        # (may be "" if all results were trimmed for budget). Never fall back to
+        # oracle invocation augmentation — that would leak ground-truth data.
+        aug_block = retrieval_augmentation if retrieval_augmentation else None
         invocations_as_used = sorted(method.invocations, key=lambda inv: inv.order_index)
     else:
         aug_block, invocations_as_used = build_augmentation_block(method.invocations, mode, shuffle_seed)
