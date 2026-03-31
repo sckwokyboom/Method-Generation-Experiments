@@ -51,7 +51,7 @@ def build_index(config: Config) -> None:
     ]
 
     log.info("Building Lucene index: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
         log.error("Indexing stderr:\n%s", result.stderr)
         raise RuntimeError(f"Indexing failed with exit code {result.returncode}")
@@ -127,7 +127,7 @@ def search_batch(
         raise FileNotFoundError(f"Lucene index not found at {index_dir}")
 
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", prefix="batch_requests_", delete=False,
+        mode="w", suffix=".json", prefix="batch_requests_", delete=False, encoding="utf-8",
     ) as req_file:
         json.dump(requests, req_file, ensure_ascii=False)
         req_path = req_file.name
@@ -148,7 +148,7 @@ def search_batch(
         ]
 
         log.info("Running batch search: %d requests", len(requests))
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=600)
         if result.returncode != 0:
             log.error("Search stderr:\n%s", result.stderr)
             raise RuntimeError(f"Batch search failed with exit code {result.returncode}")
