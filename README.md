@@ -293,31 +293,99 @@ python -m pipeline.run --config config.yaml --skip-extraction
 
 ---
 
-## Интерактивный просмотр результатов
+## Визуализация и анализ
 
-После прогона эксперимента можно сгенерировать интерактивный HTML-вьювер для детального анализа каждого сэмпла:
+Есть три уровня визуализации — до LLM, после LLM (общий), после LLM (retrieval-ориентированный).
+
+### 1. Инспекция retrieval до запуска LLM (`inspect_retrieval`)
+
+Самый важный инструмент для отладки ретривера. Генерирует HTML **без обращения к LLM** — только экстракция, индексация, поиск, форматирование промптов.
+
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect_retrieval --config config.yaml --n 15
+open results/retrieval_inspection.html
+```
+
+Для каждого сэмпла доступны 6 табов:
+
+| Tab | Что показывает |
+|-----|---------------|
+| **Full Prompt** | Полный FIM-промпт с подсвеченными `<\|fim_prefix\|>` / `<\|fim_suffix\|>` / `<\|fim_middle\|>` токенами + ground truth |
+| **Retrieved Methods** | Каждый retrieved метод раскрывается: **Overlap Analysis** (Type IoU, Owner IoU, Oracle Recall, shared types/owners — цветные тэги), **Lucene Score Explain** (декомпозиция score по термам и полям), Type Profile, Method Card, Invocation Profile, тело метода с подсветкой Java |
+| **Search Query** | Lucene query string + все поля search request: imports, field types, sibling owner types, sibling signatures, FIM prefix/suffix (что ушло в query) |
+| **Augmentation Block** | Блок Java-кода как он вставлен в промпт + ground truth рядом для сравнения |
+| **Target Method** | Полная инфо о целевом методе: oracle invocations (таблица), поля класса, supertypes, imports |
+| **Compare Prompts** | Промпт без аугментации vs с аугментацией бок о бок, с разницей в размере |
+
+Навигация: стрелки вверх/вниз по сэмплам, цифры 1-6 по табам, поиск по имени метода. В заголовке каждого retrieved метода сразу видны badge: Type IoU, кол-во shared owners, Oracle Recall%.
+
+```bash
+# Все 100 сэмплов
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect_retrieval --config config.yaml
+
+# Указать выходной файл
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect_retrieval --config config.yaml --n 20 --output ./my_inspection.html
+```
+
+### 2. Общий вьювер результатов эксперимента (`viewer`)
+
+После прогона эксперимента (с LLM). Показывает все режимы одновременно — baseline, oracle, retrieval.
 
 ```bash
 python -m pipeline.viewer --results-dir ./results
+open results/viewer.html
 ```
 
-Откроет `results/viewer.html` — самодостаточный HTML-файл без серверных зависимостей.
+Самодостаточный HTML-файл. Табы:
+- **Code** — подсветка Java для ground truth и сгенерированного кода всех режимов
+- **Diff** — side-by-side и unified diff между generated vs ground truth, cross-mode
+- **Prompt** — полный FIM-промпт с подсвеченными FIM-токенами, augmentation block
+- **Meta** — latency, token usage, compilability, ошибки, таблица invocations
 
-**Возможности:**
-
-- **Code** — подсветка синтаксиса Java для ground truth и сгенерированного кода всех 3 режимов (полные методы с сигнатурой)
-- **Diff** — side-by-side и unified diff между любыми парами: generated vs ground truth, cross-mode сравнение
-- **Prompt** — полный FIM-промпт с подсвеченными токенами `<|fim_prefix|>` / `<|fim_suffix|>` / `<|fim_middle|>`, augmentation block
-- **Meta** — latency, token usage, compilability, ошибки компиляции, таблица invocations
-
-**Навигация:** поиск по method ID, фильтры (EM Only, Compilable, Has Errors), стрелки вверх/вниз для переключения сэмплов, цифры 1-4 для табов, переключение светлой/тёмной темы.
+Навигация: поиск, фильтры (EM Only, Compilable, Has Errors), стрелки, цифры 1-4, тёмная/светлая тема.
 
 ```bash
-# Исключить промпты (значительно уменьшает размер файла)
-python -m pipeline.viewer --results-dir ./results --no-prompts
-
-# Указать путь к выходному файлу
+python -m pipeline.viewer --results-dir ./results --no-prompts   # без промптов (меньше файл)
 python -m pipeline.viewer --results-dir ./results --output ./report.html
+```
+
+### 3. Retrieval-ориентированный вьювер результатов (`retrieval_viewer`)
+
+После прогона эксперимента. Фокус на retrieval-метриках и сравнении baseline vs retrieval.
+
+```bash
+python -m pipeline.retrieval_viewer --results-dir ./results
+open results/retrieval_viewer.html
+```
+
+Табы:
+- **Overview** — агрегированная таблица метрик (включая Recall@K, API Coverage, MRR) по всем режимам
+- **Sample** — per-sample метрики всех режимов бок о бок (badge для каждого mode), oracle invocations
+- **Retrieval** — retrieved методы с rank/score, Lucene query, retrieval metrics, augmentation block
+- **Code** — ground truth + generated code каждого режима бок о бок
+
+```bash
+python -m pipeline.retrieval_viewer --results-dir ./results --output ./retrieval_report.html
+```
+
+### Терминальная инспекция (без HTML)
+
+Для быстрого просмотра в терминале:
+
+```bash
+# Oracle режимы
+python -m pipeline.inspect --config config.yaml --n 3
+
+# Retrieval режим
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect --config config.yaml --n 3 --mode retrieval_augmentation
+
+# Конкретный сэмпл
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect --config config.yaml --index 5 --mode retrieval_augmentation
 ```
 
 ---
