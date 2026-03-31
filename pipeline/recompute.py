@@ -98,22 +98,28 @@ def recompute_metrics(
 
     log.info("Found %d mode(s): %s", len(mode_dirs), [d.name for d in mode_dirs])
 
-    # Load extraction data if needed for compilability or retrieval recompute.
+    # Load extraction data if needed.
     methods_index: dict[str, ExtractedMethod] = {}
     classpath: list[str] = []
-    if recompute_compilability or recompute_retrieval:
+    needs_extraction = recompute_compilability or recompute_retrieval
+    if needs_extraction:
         if not extraction_json:
-            # Try default location.
             default = results_dir / "extracted_methods.json"
             if default.exists():
                 extraction_json = default
-            else:
-                log.error(
-                    "--recompute-compilability requires --extraction-json or "
-                    "extracted_methods.json in the results directory"
-                )
-                sys.exit(1)
-        methods_index, classpath = _load_methods_index(extraction_json)
+        if extraction_json and extraction_json.exists():
+            methods_index, classpath = _load_methods_index(extraction_json)
+        elif recompute_compilability:
+            log.error(
+                "--recompute-compilability requires --extraction-json or "
+                "extracted_methods.json in the results directory"
+            )
+            sys.exit(1)
+        else:
+            log.warning(
+                "Extraction data not found — retrieval_type_iou will not be recomputed. "
+                "Other retrieval metrics will still be recomputed from saved data."
+            )
 
     all_results: dict[str, list[SampleResult]] = {}
 
@@ -193,7 +199,14 @@ def recompute_metrics(
             if recompute_retrieval:
                 raw_retrieval = raw.get("retrieval_results")
                 raw_invocations = raw.get("invocations_ordered", [])
-                if raw_retrieval is not None and raw_invocations:
+
+                if raw_retrieval is None:
+                    # Not a retrieval mode sample — skip silently
+                    pass
+                elif not raw_invocations:
+                    log.debug("  %s: no invocations_ordered, skipping retrieval recompute",
+                              sample_path.name)
+                else:
                     rr = [RetrievalResult.from_dict(r) for r in raw_retrieval]
                     oracle = [ResolvedInvocation(
                         signature=inv["signature"],
@@ -201,7 +214,7 @@ def recompute_metrics(
                         order_index=inv["order_index"],
                     ) for inv in raw_invocations]
 
-                    aug_block = raw.get("augmentation_block", "")
+                    aug_block = raw.get("augmentation_block") or ""
                     ret_recall = invocation_recall_at_k(aug_block, oracle)
                     ret_api_cov = api_coverage_at_k(rr, oracle)
                     ret_mrr = mrr_for_similar_method(rr, ground_truth)
@@ -209,7 +222,7 @@ def recompute_metrics(
                     ret_ndcg = retrieval_ndcg_at_k(rr, oracle)
                     ret_owner_recall = owner_type_recall(rr, oracle)
 
-                    # type_iou needs method metadata — try extraction index
+                    # type_iou needs method metadata from extraction
                     method_id = raw.get("method_id", "")
                     method = methods_index.get(method_id) if methods_index else None
                     if method:
@@ -217,6 +230,9 @@ def recompute_metrics(
                             rr, method.imports, method.class_fields,
                             method.parameter_types, method.return_type,
                         )
+
+                    log.info("  %s: retrieval recomputed — recall=%.3f precision=%.3f ndcg=%.3f",
+                             sample_path.name, ret_recall, ret_precision, ret_ndcg)
 
             raw["metrics"] = {
                 "em": metrics.em,
