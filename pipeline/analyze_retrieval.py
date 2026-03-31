@@ -119,7 +119,7 @@ def load_paired_samples(results_dir: Path) -> list[PairedSample]:
     return pairs
 
 
-def print_terminal_report(pairs: list[PairedSample]) -> None:
+def print_terminal_report(pairs: list[PairedSample], results_dir: Path | None = None) -> None:
     n = len(pairs)
     print(f"\n{'='*80}")
     print(f"RETRIEVAL DIAGNOSTIC ANALYSIS — {n} paired samples")
@@ -225,6 +225,38 @@ def print_terminal_report(pairs: list[PairedSample]) -> None:
         avg_cb_high = statistics.mean([d for d in [p.codebleu_delta for p in high_recall] if d is not None] or [0])
         print(f"  Samples with recall>=0.5 (n={len(high_recall)}): "
               f"ES delta = {avg_es_high:+.4f}, CodeBLEU delta = {avg_cb_high:+.4f}")
+
+    # Per-slice analysis (if slices exist)
+    slices_dir = results_dir / "slices" if results_dir else None
+    if slices_dir and slices_dir.exists():
+        print(f"\n{'='*80}")
+        print("PER-SLICE ANALYSIS")
+        print(f"{'='*80}")
+
+        pairs_by_idx = {p.index: p for p in pairs}
+        for slice_path in sorted(slices_dir.glob("*.json")):
+            if slice_path.stem == "all":
+                continue
+            with open(slice_path, encoding="utf-8") as f:
+                slice_data = json.load(f)
+            indices = slice_data.get("indices", [])
+            slice_pairs = [pairs_by_idx[i] for i in indices if i in pairs_by_idx]
+            if not slice_pairs:
+                continue
+
+            es_deltas = [p.es_delta for p in slice_pairs]
+            cb_deltas = [d for d in [p.codebleu_delta for p in slice_pairs] if d is not None]
+            avg_es = statistics.mean(es_deltas)
+            avg_cb = statistics.mean(cb_deltas) if cb_deltas else 0
+            helped = sum(1 for d in es_deltas if d > 0.02)
+            hurt = sum(1 for d in es_deltas if d < -0.02)
+            avg_recall = statistics.mean([p.recall for p in slice_pairs])
+            avg_prec = statistics.mean([p.precision for p in slice_pairs])
+
+            print(f"\n  {slice_data['name']:<20s} (n={len(slice_pairs):3d}): "
+                  f"ES={avg_es:+.4f}  CB={avg_cb:+.4f}  "
+                  f"helped={helped} hurt={hurt}  "
+                  f"recall={avg_recall:.2f} prec={avg_prec:.2f}")
 
 
 def generate_html_report(pairs: list[PairedSample], output_path: Path) -> None:
@@ -430,7 +462,7 @@ def main():
     pairs = load_paired_samples(args.results_dir)
     log.info("Loaded %d paired samples", len(pairs))
 
-    print_terminal_report(pairs)
+    print_terminal_report(pairs, args.results_dir)
 
     output = args.output or (args.results_dir / "retrieval_analysis.html")
     generate_html_report(pairs, output)
