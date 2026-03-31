@@ -223,24 +223,61 @@ def _extract_body_lines(method_body: str, max_lines: int) -> list[str] | None:
     return lines
 
 
+FILE_SEP = "<|file_sep|>"
+
+
 def format_retrieval_augmentation(
     response: RetrievalResponse,
     retrieval_config: RetrievalConfig,
 ) -> str:
+    """Format retrieved methods as cross-file context using <|file_sep|>.
+
+    Qwen2.5 Coder was trained with cross-file context in this format:
+        <|file_sep|>path/to/File.java
+        {file content}
+
+    This goes BEFORE <|fim_prefix|> in the prompt, matching the training
+    distribution for repo-level code completion.
+    """
     if not response.results:
         return ""
 
     max_results = retrieval_config.max_results_in_prompt
     max_body = retrieval_config.max_body_lines
     include_body = retrieval_config.include_body
+    min_score_ratio = retrieval_config.min_score_ratio
 
-    parts: list[str] = ["// --- Related methods from project ---"]
+    # Score threshold: skip results with score < min_score_ratio * top-1 score
+    top_score = response.results[0].score if response.results else 0
+    score_threshold = top_score * min_score_ratio
 
-    for result in response.results[:max_results]:
-        # Source class as a short comment
+    parts: list[str] = []
+
+    included = 0
+    for result in response.results:
+        if included >= max_results:
+            break
+        if result.score < score_threshold:
+            break
+
+        # Convert class FQN to file path: com.example.Foo -> com/example/Foo.java
+        file_path = result.file_path or (result.class_fqn.replace(".", "/") + ".java")
+
+        # Build file fragment
+        fragment_lines: list[str] = []
+
+        # Package declaration
+        pkg = result.class_fqn.rsplit(".", 1)[0] if "." in result.class_fqn else ""
+        if pkg:
+            fragment_lines.append(f"package {pkg};")
+            fragment_lines.append("")
+
+        # Class context line
         class_simple = result.class_fqn.rsplit(".", 1)[-1] if result.class_fqn else ""
-        parts.append(f"// From: {result.class_fqn}")
+        if class_simple:
+            fragment_lines.append(f"// Class: {class_simple}")
 
+        # Method signature + body
         sig = _simplify_signature(result.signature)
 
         if include_body:
@@ -249,28 +286,30 @@ def format_retrieval_augmentation(
             body_lines = None
 
         if body_lines:
-            parts.append(f"{sig} {{")
+            fragment_lines.append(f"{sig} {{")
             for bl in body_lines:
-                parts.append(f"    {bl}" if bl.strip() else "")
-            parts.append("}")
+                fragment_lines.append(f"    {bl}" if bl.strip() else "")
+            fragment_lines.append("}")
         else:
-            # Signature-only stub
-            parts.append(f"{sig} {{ /* ... */ }}")
+            fragment_lines.append(f"{sig} {{ /* ... */ }}")
 
-        parts.append("")  # blank line between methods
+        parts.append(f"{FILE_SEP}{file_path}")
+        parts.append("\n".join(fragment_lines))
 
-    parts.append("// --- End related methods ---")
+        included += 1
+
+    if not parts:
+        return ""
 
     block = "\n".join(parts)
 
-    # Enforce token limit
+    # Enforce token limit — truncate to last complete file fragment
     max_chars = retrieval_config.max_augmentation_tokens * 4
     if len(block) > max_chars:
-        # Truncate to last complete method before the limit
-        cut = block[:max_chars].rfind("\n// From:")
+        cut = block[:max_chars].rfind(f"\n{FILE_SEP}")
         if cut > 0:
-            block = block[:cut] + "\n// --- End related methods ---"
+            block = block[:cut]
         else:
-            block = block[:max_chars] + "\n// --- End related methods ---"
+            block = block[:max_chars]
 
     return block

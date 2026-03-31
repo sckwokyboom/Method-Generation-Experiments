@@ -85,20 +85,25 @@ def build_fim_prompt(
     suffix = file_content[body_end:]
     ground_truth = file_content[body_start + 1 : body_end]
 
+    cross_file_context = ""
     if mode == "retrieval_augmentation":
         # retrieval_augmentation is not None when the caller is in retrieval mode
         # (may be "" if all results were trimmed for budget). Never fall back to
         # oracle invocation augmentation — that would leak ground-truth data.
+        #
+        # Cross-file context goes BEFORE <|fim_prefix|>, matching Qwen2.5 Coder's
+        # training distribution for repo-level code completion.
         aug_block = retrieval_augmentation if retrieval_augmentation else None
+        if aug_block:
+            cross_file_context = aug_block + "\n"
         invocations_as_used = sorted(method.invocations, key=lambda inv: inv.order_index)
     else:
         aug_block, invocations_as_used = build_augmentation_block(method.invocations, mode, shuffle_seed)
+        if aug_block:
+            insert_pos = find_method_signature_position(file_content, body_start)
+            prefix = file_content[:insert_pos] + aug_block + "\n" + file_content[insert_pos:body_start + 1]
 
-    if aug_block:
-        insert_pos = find_method_signature_position(file_content, body_start)
-        prefix = file_content[:insert_pos] + aug_block + "\n" + file_content[insert_pos:body_start + 1]
-
-    full_prompt = f"{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"
+    full_prompt = f"{cross_file_context}{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"
 
     return FIMPrompt(
         prefix=prefix,

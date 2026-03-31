@@ -43,6 +43,7 @@ retrieval:
   max_body_lines: 50
   include_body: true
   near_duplicate_threshold: 0.8
+  min_score_ratio: 0.3
 
 experiment:
   modes:

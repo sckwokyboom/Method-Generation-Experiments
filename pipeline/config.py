@@ -53,6 +53,7 @@ class RetrievalConfig:
     max_body_lines: int = 50
     include_body: bool = True
     near_duplicate_threshold: float = 0.8
+    min_score_ratio: float = 0.3
 
 
 @dataclass
