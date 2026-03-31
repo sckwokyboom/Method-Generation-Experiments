@@ -55,7 +55,8 @@ def generate_retrieval_viewer(results_dir: Path, output_path: Path) -> None:
     }
 
     data_json = json.dumps(data, ensure_ascii=False, default=str)
-    html = _TEMPLATE.replace("__DATA_JSON__", data_json)
+    data_json = data_json.replace("</", "<\\/")
+    html = _TEMPLATE.replace('"__DATA_JSON__"', data_json)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
@@ -138,7 +139,7 @@ code { font-family:inherit; }
     <div id="content"></div>
 </div>
 <script>
-const DATA = JSON.parse("__DATA_JSON__");
+const DATA = "__DATA_JSON__";
 const samples = DATA.samples;
 const modes = DATA.modes;
 const aggregates = DATA.aggregates;

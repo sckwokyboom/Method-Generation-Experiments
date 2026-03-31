@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import subprocess
@@ -121,6 +122,12 @@ def process_sample(
         metrics.recall_at_k = invocation_recall_at_k(aug_text, method.invocations)
         metrics.api_coverage_at_k = api_coverage_at_k(effective_retrieval.results, method.invocations)
         metrics.mrr = mrr_for_similar_method(effective_retrieval.results, fim_prompt.ground_truth)
+    elif mode == "retrieval_augmentation":
+        # Zero-hit retrieval: count as 0.0 instead of None so that
+        # aggregate metrics don't silently drop these samples.
+        metrics.recall_at_k = 0.0
+        metrics.api_coverage_at_k = 0.0
+        metrics.mrr = 0.0
 
     compilability = None
     if config.compilability.enabled:
@@ -173,6 +180,55 @@ def process_sample(
     )
 
 
+def _compute_run_manifest(mode: str, config: Config) -> str:
+    """Compute a hash that captures all parameters affecting sample outputs."""
+    manifest = {
+        "mode": mode,
+        "model_name": config.llm.model_name,
+        "temperature": config.llm.temperature,
+        "max_tokens": config.llm.max_tokens,
+        "seed": config.llm.seed,
+        "context_window": config.llm.context_window,
+        "shuffle_seed": config.experiment.shuffle_seed,
+        "sample_count": config.dataset.sample_count,
+        "random_seed": config.dataset.random_seed,
+    }
+    if config.retrieval and mode == "retrieval_augmentation":
+        manifest["retrieval"] = {
+            "top_k": config.retrieval.top_k,
+            "max_augmentation_tokens": config.retrieval.max_augmentation_tokens,
+            "max_results_in_prompt": config.retrieval.max_results_in_prompt,
+            "max_body_lines": config.retrieval.max_body_lines,
+            "include_body": config.retrieval.include_body,
+            "near_duplicate_threshold": config.retrieval.near_duplicate_threshold,
+        }
+    raw = json.dumps(manifest, sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _validate_manifest(samples_dir: Path, mode: str, config: Config) -> bool:
+    """Check if cached samples match the current run config. Returns True if valid."""
+    manifest_path = samples_dir / "run_manifest.json"
+    current_hash = _compute_run_manifest(mode, config)
+    if manifest_path.exists():
+        try:
+            stored = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if stored.get("hash") == current_hash:
+                return True
+            log.warning("Run manifest mismatch in %s — cached samples will be recomputed", samples_dir)
+        except Exception:
+            pass
+    return False
+
+
+def _write_manifest(samples_dir: Path, mode: str, config: Config) -> None:
+    manifest_path = samples_dir / "run_manifest.json"
+    manifest_path.write_text(
+        json.dumps({"hash": _compute_run_manifest(mode, config)}, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _run_mode_sequential(
     methods: list[ExtractedMethod],
     mode: str,
@@ -184,11 +240,12 @@ def _run_mode_sequential(
 ) -> list[SampleResult]:
     results_by_idx: dict[int, SampleResult] = {}
     completed = 0
+    cache_valid = _validate_manifest(samples_dir, mode, config)
 
     for i, method in enumerate(methods):
         sample_path = samples_dir / f"sample_{i:03d}.json"
 
-        if sample_path.exists():
+        if cache_valid and sample_path.exists():
             log.info("[%s] Sample %d/%d already exists, loading (resume)",
                      mode, i + 1, len(methods))
             try:
@@ -215,6 +272,7 @@ def _run_mode_sequential(
 
         update_progress(mode_dir, mode, completed, len(methods))
 
+    _write_manifest(samples_dir, mode, config)
     return [results_by_idx[i] for i in sorted(results_by_idx)]
 
 
@@ -231,12 +289,13 @@ def _run_mode_concurrent(
     results_by_idx: dict[int, SampleResult] = {}
     completed = 0
     progress_lock = threading.Lock()
+    cache_valid = _validate_manifest(samples_dir, mode, config)
 
     # First pass: load cached results
     to_process: list[tuple[int, ExtractedMethod]] = []
     for i, method in enumerate(methods):
         sample_path = samples_dir / f"sample_{i:03d}.json"
-        if sample_path.exists():
+        if cache_valid and sample_path.exists():
             log.info("[%s] Sample %d/%d already exists, loading (resume)",
                      mode, i + 1, len(methods))
             try:
@@ -285,6 +344,7 @@ def _run_mode_concurrent(
             if result is not None:
                 results_by_idx[i] = result
 
+    _write_manifest(samples_dir, mode, config)
     return [results_by_idx[i] for i in sorted(results_by_idx)]
 
 
