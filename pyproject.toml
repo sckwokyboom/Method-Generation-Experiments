@@ -14,8 +14,10 @@ dependencies = [
     "tree-sitter>=0.22,<0.23",
     "tree-sitter-java>=0.21,<0.23",
     "codebleu>=0.7",
-    "tiktoken>=0.7",
 ]
+
+[project.optional-dependencies]
+tiktoken = ["tiktoken>=0.7"]
 
 [tool.setuptools.packages.find]
 include = ["pipeline*"]
