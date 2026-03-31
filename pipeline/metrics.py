@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import re
 from collections import Counter
 
 import Levenshtein
@@ -202,3 +204,166 @@ def mrr_for_similar_method(
             return 1.0 / result.rank
 
     return 0.0
+
+
+def _oracle_api_set(oracle_invocations: list[ResolvedInvocation]) -> set[tuple[str, str]]:
+    """Unique (owner_fqn, method_name) pairs from oracle invocations."""
+    apis = set()
+    for inv in oracle_invocations:
+        if inv.resolution_mode != "EXACT":
+            continue
+        owner, method_name = _parse_invocation_key(inv.signature)
+        apis.add((owner.lower(), method_name.lower()))
+    return apis
+
+
+def _result_api_set(result: RetrievalResult) -> set[tuple[str, str]]:
+    """Unique (owner_fqn, method_name) pairs from a retrieved method's invocation profile."""
+    apis = set()
+    profile = result.invocation_profile or ""
+    for line in profile.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("bigram:") or line.startswith("trigram:"):
+            continue
+        # "com.foo.Bar::baz(int) -> void" or "com.foo.Bar::baz(int) -> void x3"
+        parts = line.split("::", 1)
+        if len(parts) < 2:
+            continue
+        owner_fqn = parts[0].lower()
+        rest = parts[1]
+        paren_idx = rest.find("(")
+        method_name = rest[:paren_idx].lower() if paren_idx > 0 else rest.split()[0].lower()
+        apis.add((owner_fqn, method_name))
+    return apis
+
+
+def _extract_simple_types(text: str) -> set[str]:
+    """Extract simple type names (capitalized, ≥3 chars) from any text."""
+    types = set()
+    for token in re.split(r"[^a-zA-Z0-9]+", text or ""):
+        if len(token) >= 3 and token[0].isupper():
+            types.add(token.lower())
+    return types
+
+
+def retrieval_precision_at_k(
+    retrieval_results: list[RetrievalResult],
+    oracle_invocations: list[ResolvedInvocation],
+) -> float:
+    """Fraction of retrieved methods that contain at least 1 needed oracle API."""
+    if not retrieval_results:
+        return 0.0
+    needed = _oracle_api_set(oracle_invocations)
+    if not needed:
+        return 1.0
+
+    relevant_count = 0
+    for result in retrieval_results:
+        result_apis = _result_api_set(result)
+        if needed & result_apis:
+            relevant_count += 1
+    return relevant_count / len(retrieval_results)
+
+
+def retrieval_ndcg_at_k(
+    retrieval_results: list[RetrievalResult],
+    oracle_invocations: list[ResolvedInvocation],
+) -> float:
+    """NDCG where relevance = number of oracle APIs found in each retrieved method."""
+    if not retrieval_results:
+        return 0.0
+    needed = _oracle_api_set(oracle_invocations)
+    if not needed:
+        return 1.0
+
+    # Compute gains
+    gains = []
+    for result in retrieval_results:
+        result_apis = _result_api_set(result)
+        overlap = len(needed & result_apis)
+        gains.append(overlap)
+
+    # DCG
+    dcg = sum(g / math.log2(i + 2) for i, g in enumerate(gains))
+
+    # Ideal DCG: all needed APIs found in first slot
+    ideal_gains = sorted(gains, reverse=True)
+    idcg = sum(g / math.log2(i + 2) for i, g in enumerate(ideal_gains))
+
+    # If ideal is also 0, nothing was findable
+    if idcg == 0:
+        return 0.0
+    return dcg / idcg
+
+
+def retrieval_type_iou(
+    retrieval_results: list[RetrievalResult],
+    method_imports: list[str],
+    method_class_fields: list,
+    method_parameter_types: list[str],
+    method_return_type: str | None,
+) -> float:
+    """Average Type IoU between query types and each retrieved method's type profile."""
+    # Build query types from the same sources as the query
+    query_types: set[str] = set()
+    for imp in (method_imports or []):
+        s = imp.rsplit(".", 1)[-1].lower()
+        if len(s) >= 3:
+            query_types.add(s)
+    for f in (method_class_fields or []):
+        fqn = f.type_fqn if hasattr(f, "type_fqn") else (f.get("typeFqn", "") if isinstance(f, dict) else "")
+        s = fqn.rsplit(".", 1)[-1].lower()
+        if len(s) >= 3:
+            query_types.add(s)
+    for pt in (method_parameter_types or []):
+        for tok in re.split(r"[<>,\s]+", pt):
+            simple = tok.rsplit(".", 1)[-1]
+            if len(simple) >= 3 and simple[0].isupper():
+                query_types.add(simple.lower())
+    if method_return_type:
+        for tok in re.split(r"[<>,\s]+", method_return_type):
+            simple = tok.rsplit(".", 1)[-1]
+            if len(simple) >= 3 and simple[0].isupper():
+                query_types.add(simple.lower())
+
+    stop = {"string", "object", "list", "map", "set", "optional", "integer",
+            "boolean", "void", "exception", "override"}
+    query_types -= stop
+
+    if not retrieval_results or not query_types:
+        return 0.0
+
+    ious = []
+    for result in retrieval_results:
+        result_types = _extract_simple_types(result.type_profile)
+        result_types -= stop
+        inter = query_types & result_types
+        union = query_types | result_types
+        iou = len(inter) / len(union) if union else 0.0
+        ious.append(iou)
+
+    return sum(ious) / len(ious) if ious else 0.0
+
+
+def owner_type_recall(
+    retrieval_results: list[RetrievalResult],
+    oracle_invocations: list[ResolvedInvocation],
+) -> float:
+    """Fraction of unique oracle owner types covered by any retrieved method."""
+    needed_owners = set()
+    for inv in oracle_invocations:
+        if inv.resolution_mode != "EXACT":
+            continue
+        owner, _ = _parse_invocation_key(inv.signature)
+        needed_owners.add(owner.lower())
+    if not needed_owners:
+        return 1.0
+
+    found_owners = set()
+    for result in retrieval_results:
+        result_apis = _result_api_set(result)
+        for owner_fqn, _ in result_apis:
+            if owner_fqn in needed_owners:
+                found_owners.add(owner_fqn)
+
+    return len(found_owners) / len(needed_owners)

@@ -84,6 +84,10 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
     recall_values = [s.metrics.recall_at_k for s in samples if s.metrics.recall_at_k is not None]
     api_cov_values = [s.metrics.api_coverage_at_k for s in samples if s.metrics.api_coverage_at_k is not None]
     mrr_values = [s.metrics.mrr for s in samples if s.metrics.mrr is not None]
+    precision_values = [s.metrics.retrieval_precision_at_k for s in samples if s.metrics.retrieval_precision_at_k is not None]
+    ndcg_values = [s.metrics.retrieval_ndcg_at_k for s in samples if s.metrics.retrieval_ndcg_at_k is not None]
+    type_iou_values = [s.metrics.retrieval_type_iou for s in samples if s.metrics.retrieval_type_iou is not None]
+    owner_recall_values = [s.metrics.owner_type_recall for s in samples if s.metrics.owner_type_recall is not None]
 
     def stats(values: list[float]) -> dict:
         if not values:
@@ -108,6 +112,10 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
         "recall_at_k": stats(recall_values) if recall_values else None,
         "api_coverage_at_k": stats(api_cov_values) if api_cov_values else None,
         "mrr": stats(mrr_values) if mrr_values else None,
+        "retrieval_precision_at_k": stats(precision_values) if precision_values else None,
+        "retrieval_ndcg_at_k": stats(ndcg_values) if ndcg_values else None,
+        "retrieval_type_iou": stats(type_iou_values) if type_iou_values else None,
+        "owner_type_recall": stats(owner_recall_values) if owner_recall_values else None,
     }
 
 
@@ -118,7 +126,9 @@ def generate_comparison_table(all_results: dict[str, list[SampleResult]]) -> str
     rows = []
 
     for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu",
-                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr"]:
+                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr",
+                        "retrieval_precision_at_k", "retrieval_ndcg_at_k",
+                        "retrieval_type_iou", "owner_type_recall"]:
         row = [metric_name]
         for mode in all_results:
             agg = aggregates[mode].get(metric_name)
@@ -297,7 +307,9 @@ def generate_markdown_report(
     lines.append("### Key Findings")
     lines.append("")
     for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu",
-                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr"]:
+                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr",
+                        "retrieval_precision_at_k", "retrieval_ndcg_at_k",
+                        "retrieval_type_iou", "owner_type_recall"]:
         best_mode = None
         best_val = -1.0
         for mode in modes:
@@ -323,7 +335,9 @@ def generate_markdown_report(
         lines.append("|--------|------|--------|-----|")
         for metric_name in ["em", "es", "iou", "lcs_length", "lcs_ratio", "lcs_no_ident_length",
                             "lcs_no_ident_ratio", "codebleu", "compilable",
-                            "recall_at_k", "api_coverage_at_k", "mrr"]:
+                            "recall_at_k", "api_coverage_at_k", "mrr",
+                            "retrieval_precision_at_k", "retrieval_ndcg_at_k",
+                            "retrieval_type_iou", "owner_type_recall"]:
             m = agg.get(metric_name)
             if m is None:
                 lines.append(f"| {metric_name} | N/A | N/A | N/A |")

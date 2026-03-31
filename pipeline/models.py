@@ -189,6 +189,7 @@ class RetrievalResponse:
 
 @dataclass
 class MetricsResult:
+    # --- Generation quality metrics ---
     em: bool
     es: float
     iou: float
@@ -197,9 +198,21 @@ class MetricsResult:
     lcs_no_ident_length: int | None = None
     lcs_no_ident_ratio: float | None = None
     codebleu: float | None = None
+
+    # --- Retrieval quality metrics ---
     recall_at_k: float | None = None
     api_coverage_at_k: float | None = None
     mrr: float | None = None
+
+    # --- Retrieval diagnostic metrics ---
+    # Precision: fraction of retrieved methods that contain at least 1 needed API
+    retrieval_precision_at_k: float | None = None
+    # NDCG: normalized discounted cumulative gain (relevant = has oracle API overlap)
+    retrieval_ndcg_at_k: float | None = None
+    # Type IoU between query types and retrieved types (averaged over results)
+    retrieval_type_iou: float | None = None
+    # How many unique oracle owner types are covered by retrieved methods
+    owner_type_recall: float | None = None
 
 
 @dataclass
@@ -255,6 +268,10 @@ class SampleResult:
                 "recall_at_k": self.metrics.recall_at_k,
                 "api_coverage_at_k": self.metrics.api_coverage_at_k,
                 "mrr": self.metrics.mrr,
+                "retrieval_precision_at_k": self.metrics.retrieval_precision_at_k,
+                "retrieval_ndcg_at_k": self.metrics.retrieval_ndcg_at_k,
+                "retrieval_type_iou": self.metrics.retrieval_type_iou,
+                "owner_type_recall": self.metrics.owner_type_recall,
                 "compilable": self.compilability.success if self.compilability else None,
                 "compile_errors": self.compilability.error_messages if self.compilability else [],
                 "compile_exit_code": self.compilability.exit_code if self.compilability else None,
@@ -282,6 +299,10 @@ class SampleResult:
             recall_at_k=metrics_d.get("recall_at_k"),
             api_coverage_at_k=metrics_d.get("api_coverage_at_k"),
             mrr=metrics_d.get("mrr"),
+            retrieval_precision_at_k=metrics_d.get("retrieval_precision_at_k"),
+            retrieval_ndcg_at_k=metrics_d.get("retrieval_ndcg_at_k"),
+            retrieval_type_iou=metrics_d.get("retrieval_type_iou"),
+            owner_type_recall=metrics_d.get("owner_type_recall"),
         )
         comp = None
         if metrics_d.get("compilable") is not None:

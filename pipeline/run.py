@@ -16,6 +16,7 @@ from pipeline.dataset import build_dataset, load_extraction
 from pipeline.llm import generate_completion
 from pipeline.metrics import (
     compute_all_metrics, invocation_recall_at_k, api_coverage_at_k, mrr_for_similar_method,
+    retrieval_precision_at_k, retrieval_ndcg_at_k, retrieval_type_iou, owner_type_recall,
 )
 from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult, SampleResult
 from pipeline.normalize import normalize_code
@@ -119,15 +120,27 @@ def process_sample(
     # i.e. exactly what the model actually saw.
     if effective_retrieval and effective_retrieval.results:
         aug_text = retrieval_aug or ""
+        results = effective_retrieval.results
         metrics.recall_at_k = invocation_recall_at_k(aug_text, method.invocations)
-        metrics.api_coverage_at_k = api_coverage_at_k(effective_retrieval.results, method.invocations)
-        metrics.mrr = mrr_for_similar_method(effective_retrieval.results, fim_prompt.ground_truth)
+        metrics.api_coverage_at_k = api_coverage_at_k(results, method.invocations)
+        metrics.mrr = mrr_for_similar_method(results, fim_prompt.ground_truth)
+        metrics.retrieval_precision_at_k = retrieval_precision_at_k(results, method.invocations)
+        metrics.retrieval_ndcg_at_k = retrieval_ndcg_at_k(results, method.invocations)
+        metrics.retrieval_type_iou = retrieval_type_iou(
+            results, method.imports, method.class_fields,
+            method.parameter_types, method.return_type,
+        )
+        metrics.owner_type_recall = owner_type_recall(results, method.invocations)
     elif mode == "retrieval_augmentation":
         # Zero-hit retrieval: count as 0.0 instead of None so that
         # aggregate metrics don't silently drop these samples.
         metrics.recall_at_k = 0.0
         metrics.api_coverage_at_k = 0.0
         metrics.mrr = 0.0
+        metrics.retrieval_precision_at_k = 0.0
+        metrics.retrieval_ndcg_at_k = 0.0
+        metrics.retrieval_type_iou = 0.0
+        metrics.owner_type_recall = 0.0
 
     compilability = None
     if config.compilability.enabled:
@@ -413,6 +426,7 @@ def main():
     parser = argparse.ArgumentParser(description="Java Method Generation Experiment Pipeline")
     parser.add_argument("--config", default="config.yaml", help="Path to config file")
     parser.add_argument("--mode", nargs="*", help="Run only specific modes")
+    parser.add_argument("--output-dir", default=None, help="Override output directory (default: from config)")
     parser.add_argument("--skip-extraction", action="store_true", help="Skip extraction step")
     parser.add_argument("--skip-compilability", action="store_true", help="Skip compilability checks")
     args = parser.parse_args()
@@ -421,6 +435,9 @@ def main():
 
     if args.mode:
         config.experiment.modes = args.mode
+
+    if args.output_dir:
+        config.output.dir = args.output_dir
 
     if args.skip_compilability:
         config.compilability.enabled = False

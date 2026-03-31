@@ -21,8 +21,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from pipeline.metrics import compute_all_metrics
-from pipeline.models import ExtractedMethod, SampleResult
+from pipeline.metrics import (
+    compute_all_metrics,
+    invocation_recall_at_k, api_coverage_at_k, mrr_for_similar_method,
+    retrieval_precision_at_k, retrieval_ndcg_at_k, retrieval_type_iou, owner_type_recall,
+)
+from pipeline.models import ExtractedMethod, ResolvedInvocation, RetrievalResult, SampleResult
 from pipeline.normalize import normalize_code
 from pipeline.report import aggregate_metrics, generate_comparison_table
 
@@ -80,6 +84,7 @@ def recompute_metrics(
     results_dir: Path,
     include_codebleu: bool = True,
     recompute_compilability: bool = False,
+    recompute_retrieval: bool = False,
     extraction_json: Path | None = None,
     source_version: str = "21",
     java_home: str | None = None,
@@ -93,10 +98,10 @@ def recompute_metrics(
 
     log.info("Found %d mode(s): %s", len(mode_dirs), [d.name for d in mode_dirs])
 
-    # Load extraction data if recomputing compilability.
+    # Load extraction data if needed for compilability or retrieval recompute.
     methods_index: dict[str, ExtractedMethod] = {}
     classpath: list[str] = []
-    if recompute_compilability:
+    if recompute_compilability or recompute_retrieval:
         if not extraction_json:
             # Try default location.
             default = results_dir / "extracted_methods.json"
@@ -175,6 +180,44 @@ def recompute_metrics(
                         sample_path.name, method_id,
                     )
 
+            # Retrieval metrics: recompute from saved data or preserve old values.
+            old_metrics = raw.get("metrics", {})
+            ret_recall = old_metrics.get("recall_at_k")
+            ret_api_cov = old_metrics.get("api_coverage_at_k")
+            ret_mrr = old_metrics.get("mrr")
+            ret_precision = old_metrics.get("retrieval_precision_at_k")
+            ret_ndcg = old_metrics.get("retrieval_ndcg_at_k")
+            ret_type_iou = old_metrics.get("retrieval_type_iou")
+            ret_owner_recall = old_metrics.get("owner_type_recall")
+
+            if recompute_retrieval:
+                raw_retrieval = raw.get("retrieval_results")
+                raw_invocations = raw.get("invocations_ordered", [])
+                if raw_retrieval is not None and raw_invocations:
+                    rr = [RetrievalResult.from_dict(r) for r in raw_retrieval]
+                    oracle = [ResolvedInvocation(
+                        signature=inv["signature"],
+                        resolution_mode=inv["resolution_mode"],
+                        order_index=inv["order_index"],
+                    ) for inv in raw_invocations]
+
+                    aug_block = raw.get("augmentation_block", "")
+                    ret_recall = invocation_recall_at_k(aug_block, oracle)
+                    ret_api_cov = api_coverage_at_k(rr, oracle)
+                    ret_mrr = mrr_for_similar_method(rr, ground_truth)
+                    ret_precision = retrieval_precision_at_k(rr, oracle)
+                    ret_ndcg = retrieval_ndcg_at_k(rr, oracle)
+                    ret_owner_recall = owner_type_recall(rr, oracle)
+
+                    # type_iou needs method metadata — try extraction index
+                    method_id = raw.get("method_id", "")
+                    method = methods_index.get(method_id) if methods_index else None
+                    if method:
+                        ret_type_iou = retrieval_type_iou(
+                            rr, method.imports, method.class_fields,
+                            method.parameter_types, method.return_type,
+                        )
+
             raw["metrics"] = {
                 "em": metrics.em,
                 "es": metrics.es,
@@ -184,6 +227,13 @@ def recompute_metrics(
                 "lcs_no_ident_length": metrics.lcs_no_ident_length,
                 "lcs_no_ident_ratio": metrics.lcs_no_ident_ratio,
                 "codebleu": metrics.codebleu,
+                "recall_at_k": ret_recall,
+                "api_coverage_at_k": ret_api_cov,
+                "mrr": ret_mrr,
+                "retrieval_precision_at_k": ret_precision,
+                "retrieval_ndcg_at_k": ret_ndcg,
+                "retrieval_type_iou": ret_type_iou,
+                "owner_type_recall": ret_owner_recall,
                 "compilable": comp_success,
                 "compile_errors": comp_errors,
                 "compile_exit_code": comp_exit_code,
@@ -261,6 +311,11 @@ def main():
         help="Re-run javac compilability checks (requires extraction data)",
     )
     parser.add_argument(
+        "--recompute-retrieval",
+        action="store_true",
+        help="Recompute retrieval diagnostic metrics from saved retrieval_results",
+    )
+    parser.add_argument(
         "--extraction-json",
         type=Path,
         default=None,
@@ -291,6 +346,7 @@ def main():
         results_dir=args.results_dir,
         include_codebleu=not args.no_codebleu,
         recompute_compilability=args.recompute_compilability,
+        recompute_retrieval=args.recompute_retrieval,
         extraction_json=args.extraction_json,
         source_version=args.source_version,
         java_home=args.java_home,
