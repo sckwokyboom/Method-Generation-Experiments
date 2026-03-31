@@ -2,22 +2,22 @@
 
 Экспериментальный пайплайн для оценки генерации тела Java-метода через LLM (Qwen 2.5 Coder, FIM mode).
 
-**Гипотеза:** помогает ли аугментация из сигнатур method invocations при генерации, и влияет ли порядок сигнатур на качество?
+**Гипотеза:** помогает ли аугментация из сигнатур method invocations при генерации, и влияет ли порядок сигнатур на качество? Помогает ли retrieval-based аугментация (поиск похожих методов по проекту)?
 
-**Три режима:**
+**Режимы:**
 
 | Режим | Описание |
 |---|---|
 | `no_augmentation` | Только замаскированный Java-файл, без подсказок |
 | `ordered_augmentation` | + блок с сигнатурами invocations в порядке появления в коде |
 | `shuffled_augmentation` | + те же сигнатуры, но в случайном порядке |
+| `retrieval_augmentation` | + похожие методы из проекта, найденные Lucene-ретривером |
 
 ---
 
 ## Требования
 
-- **Java 17** (для сборки и запуска extractor'а)
-- **Java 21+** (нужна для сборки target-проекта rustyconnector)
+- **Java 17** (для сборки и запуска extractor'а и retriever'а)
 - **Python 3.11+**
 - **Git**
 
@@ -37,22 +37,28 @@
 pip install -r requirements.txt
 ```
 
-### 2. Собрать extractor JAR
+### 2. Собрать Java-модули
 
-Extractor — это отдельный Java-модуль, который парсит Java-проекты через Eclipse JDT и извлекает методы с типизированными сигнатурами invocations.
+Проект содержит три Gradle-подпроекта:
+- **shared** — общие модели данных
+- **extractor-core** — парсер Java-проектов через Eclipse JDT (извлечение методов, invocations, типов)
+- **retriever** — Lucene-ретривер для поиска похожих методов
 
 ```bash
 cd extractor
-JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew jar
+JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew :extractor-core:jar :retriever:shadowJar
 cd ..
 ```
 
-Результат: `extractor/build/libs/method-extractor.jar` (~17 MB, fat JAR со всеми зависимостями).
+Результат:
+- `extractor/extractor-core/build/libs/method-extractor-0.2.0.jar` (~18 MB, fat JAR)
+- `extractor/retriever/build/libs/method-retriever-0.2.0.jar` (~11 MB, shadow JAR с Lucene)
 
-Убедиться, что JAR запускается:
+Убедиться, что JAR'ы запускаются:
 
 ```bash
-java -jar extractor/build/libs/method-extractor.jar --help
+java -jar extractor/extractor-core/build/libs/method-extractor-0.2.0.jar --help
+java -jar extractor/retriever/build/libs/method-retriever-0.2.0.jar --help
 ```
 
 ### 3. Клонировать target-проект
@@ -91,7 +97,7 @@ Extractor резолвит classpath через Gradle init script и извле
 
 ```bash
 JAVA_HOME=$(/usr/libexec/java_home -v 17) \
-  $(/usr/libexec/java_home -v 17)/bin/java -jar extractor/build/libs/method-extractor.jar \
+  $(/usr/libexec/java_home -v 17)/bin/java -jar extractor/extractor-core/build/libs/method-extractor-0.2.0.jar \
   --project-path ./target-project/rustyconnector-minecraft/plugin \
   --output ./results/extracted_methods.json \
   --min-statements 3
@@ -181,6 +187,68 @@ python -m pipeline.inspect --config config.yaml --n 1 --json
 
 ---
 
+## Retrieval-augmented генерация
+
+Ретривер ищет по проекту методы, похожие на целевой, и добавляет их как контекст в FIM-промпт. Это позволяет LLM видеть паттерны использования API из реального проекта.
+
+### Как работает
+
+1. **Экстракция** — для каждого метода извлекаются расширенные метаданные: imports, поля класса, supertypes, сигнатуры соседних методов, используемые типы
+2. **Индексация** — все методы индексируются в Lucene с полями: `typeProfile` (простые имена типов), `methodCard` (структурная карточка), `invocationProfile` (сигнатуры вызовов с bigrams)
+3. **Поиск** — для целевого метода строится query из его типов, сигнатуры, типов полей класса. Используется MultiSimilarity (BM25 + LM Jelinek-Mercer + LM Dirichlet)
+4. **Аугментация** — найденные методы вставляются как Java-код перед целевым методом в FIM-промпте
+5. **Leakage prevention** — исключается сам метод, методы из того же файла и near-duplicates
+
+### Сборка индекса
+
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  java -jar extractor/retriever/build/libs/method-retriever-0.2.0.jar index \
+  --input ./results/extracted_methods.json \
+  --index-dir ./results/lucene-index
+```
+
+> Индекс автоматически создаётся при запуске пайплайна с `retrieval_augmentation`, если его нет.
+
+### Инспекция retrieval (без LLM)
+
+Визуальная инспекция того, что находит ретривер и как выглядят промпты:
+
+```bash
+# HTML-инспектор с полной визуализацией
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect_retrieval --config config.yaml --n 15
+
+# Открыть в браузере
+open results/retrieval_inspection.html
+```
+
+Инспектор показывает для каждого сэмпла:
+- **Full Prompt** — полный FIM-промпт с подсвеченными FIM-токенами
+- **Retrieved Methods** — каждый найденный метод с Lucene explain, overlap analysis (Type IoU, Oracle Recall, shared types/owners)
+- **Search Query** — Lucene query + все поля search request (imports, field types, sibling owner types)
+- **Augmentation Block** — блок как он вставлен в промпт
+- **Target Method** — oracle invocations, поля класса, supertypes
+- **Compare Prompts** — промпт без аугментации vs с аугментацией
+
+```bash
+# Терминальная инспекция (компактнее)
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.inspect --config config.yaml --n 3 --mode retrieval_augmentation
+```
+
+### Retrieval metrics
+
+Помимо стандартных метрик генерации, для `retrieval_augmentation` считаются:
+
+| Метрика | Описание |
+|---|---|
+| **Recall@K** | Доля oracle invocations, чьи owner+method name найдены в аугментации |
+| **API Coverage@K** | Доля нужных (ownerType, methodName) пар, покрытых retrieved методами |
+| **MRR** | Mean Reciprocal Rank для нахождения метода с высоким token overlap с ground truth |
+
+---
+
 ## Запуск эксперимента
 
 ### Настройка endpoint'а
@@ -198,20 +266,23 @@ llm:
 Endpoint должен поддерживать `/v1/completions` (не `/v1/chat/completions`) и FIM-токены Qwen 2.5 Coder:
 `<|fim_prefix|>`, `<|fim_suffix|>`, `<|fim_middle|>`.
 
-### Полный прогон (все 3 режима, 100 сэмплов)
+### Полный прогон (все режимы, 100 сэмплов)
 
 ```bash
-python -m pipeline.run --config config.yaml
+JAVA_HOME=$(/usr/libexec/java_home -v 17) python -m pipeline.run --config config.yaml
 ```
+
+> `JAVA_HOME` нужен для retrieval (Lucene) и compilability (javac). Если `retrieval_augmentation` не используется, можно опустить.
 
 ### Отдельные режимы
 
 ```bash
-# Только без аугментации
-python -m pipeline.run --config config.yaml --mode no_augmentation
+# Baseline + retrieval (основной эксперимент)
+JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+  python -m pipeline.run --config config.yaml --mode no_augmentation retrieval_augmentation
 
-# Два режима
-python -m pipeline.run --config config.yaml --mode ordered_augmentation shuffled_augmentation
+# Только oracle аугментация
+python -m pipeline.run --config config.yaml --mode ordered_augmentation
 
 # Без проверки компилируемости (быстрее)
 python -m pipeline.run --config config.yaml --skip-compilability
@@ -259,6 +330,7 @@ python -m pipeline.viewer --results-dir ./results --output ./report.html
 results/
 ├── extracted_methods.json         # Все извлечённые методы (из экстрактора)
 ├── dataset.json                   # Индекс сэмплированных методов
+├── lucene-index/                  # Lucene-индекс для ретривера
 ├── no_augmentation/
 │   ├── aggregate.json             # Агрегированные метрики по режиму
 │   └── samples/
@@ -266,11 +338,13 @@ results/
 │       └── ...
 ├── ordered_augmentation/
 │   └── ...
-├── shuffled_augmentation/
+├── retrieval_augmentation/        # + retrieval results, query debug
 │   └── ...
 ├── summary.json                   # Сравнение всех режимов
 ├── comparison_table.txt           # Таблица метрик
-└── viewer.html                    # Интерактивный вьювер (генерируется viewer.py)
+├── viewer.html                    # Интерактивный вьювер (oracle эксперименты)
+├── retrieval_viewer.html          # Вьювер для retrieval эксперимента
+└── retrieval_inspection.html      # Инспектор retrieval (без LLM)
 ```
 
 ### Пример таблицы сравнения
@@ -298,33 +372,55 @@ results/
 | **IoU** | Jaccard на множестве токенов (multiset intersection / union) |
 | **LCS ratio** | Длина LCS на токенах / `max(len(gen_tokens), len(ref_tokens))` |
 | **Compilable** | Успешная компиляция файла через `javac` после подстановки тела |
+| **Recall@K** | Доля oracle invocations, покрытых retrieved аугментацией (только `retrieval_augmentation`) |
+| **API Coverage@K** | Доля нужных API (owner+method), найденных ретривером (только `retrieval_augmentation`) |
+| **MRR** | Mean Reciprocal Rank похожего метода в retrieved результатах (только `retrieval_augmentation`) |
 
 ---
 
 ## Структура кода
 
 ```
-extractor/
-  src/main/java/com/experiment/extractor/
-    cli/ExtractorCli.java           # CLI entry point (picocli)
-    analysis/MethodExtractor.java   # JDT two-pass AST visitor
-    analysis/MethodClassifier.java  # Фильтрация getter/setter/test/...
-    classpath/ClasspathResolver.java # Gradle init script → classpath
-    model/                          # Data records
+extractor/                              # Gradle multi-project (Java 17)
+  settings.gradle.kts                   # include("shared", "extractor-core", "retriever")
+  shared/                               # Общие модели данных
+    src/.../shared/model/
+      ExtractedMethod.java              # Метод с расширенными метаданными
+      ClassField.java, SiblingMethod.java, ...
+  extractor-core/                       # Парсер Java-проектов
+    src/.../extractor/
+      cli/ExtractorCli.java             # CLI entry point (picocli)
+      analysis/MethodExtractor.java     # JDT two-pass AST visitor
+      analysis/MethodClassifier.java    # Фильтрация getter/setter/test/...
+      classpath/ClasspathResolver.java  # Gradle init script → classpath
+  retriever/                            # Lucene-ретривер
+    src/.../retriever/
+      cli/RetrieverCli.java             # CLI: index + search-batch
+      index/IndexBuilder.java           # Построение Lucene-индекса
+      index/MethodCardBuilder.java      # Структурная карточка метода
+      index/TypeProfileBuilder.java     # Профиль типов (simple names)
+      index/InvocationProfileBuilder.java # Invocation signatures + bigrams
+      search/QueryBuilder.java          # Type query + Signature query + Invocation query
+      search/SearchExecutor.java        # Поиск + leakage filter + class diversity
+      search/LeakageFilter.java         # Исключение target/same-file/near-dup
+      similarity/CompositeSimilarity.java # MultiSimilarity: BM25 + LM Jelinek-Mercer + LM Dirichlet
 
-pipeline/
-  config.py          # Dataclass-based YAML config
-  models.py          # Python mirrors of Java model
-  dataset.py         # Загрузка, фильтрация, сэмплирование
-  prompt.py          # FIM prompt + augmentation block
-  llm.py             # httpx client для v1/completions
-  normalize.py       # Нормализация кода + identifier unification
-  metrics.py         # EM, ES, IoU, LCS
-  compilability.py   # javac subprocess check
-  report.py          # Агрегация + таблицы
-  run.py             # Главный оркестратор
-  inspect.py         # Dry-run инспекция сэмплов
-  viewer.py          # Генератор интерактивного HTML-вьювера
+pipeline/                               # Python пайплайн
+  config.py            # Dataclass-based YAML config (вкл. RetrievalConfig)
+  models.py            # Python mirrors of Java model + RetrievalResult
+  dataset.py           # Загрузка, фильтрация, сэмплирование
+  prompt.py            # FIM prompt + augmentation block (oracle + retrieval)
+  llm.py               # HTTP client для v1/completions
+  retrieval.py         # Оркестрация retrieval: index, search, format augmentation
+  normalize.py         # Нормализация кода + identifier unification
+  metrics.py           # EM, ES, IoU, LCS, CodeBLEU + Recall@K, API Coverage, MRR
+  compilability.py     # javac subprocess check
+  report.py            # Агрегация + таблицы (вкл. retrieval метрики)
+  run.py               # Главный оркестратор
+  inspect.py           # Dry-run инспекция сэмплов (вкл. retrieval_augmentation)
+  inspect_retrieval.py # HTML-инспектор retrieval (Lucene explain, overlap analysis)
+  viewer.py            # HTML-вьювер для oracle экспериментов
+  retrieval_viewer.py  # HTML-вьювер для retrieval экспериментов
 ```
 
 ---
