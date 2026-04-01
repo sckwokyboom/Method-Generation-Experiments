@@ -304,6 +304,34 @@ def _build_extraction_index(
     return index
 
 
+def _extract_param_types(params_str: str) -> list[str]:
+    """Extract simple type names from a parameter list string.
+
+    Handles both 'int x, String y' (signature with names) and 'int, String'
+    (types only). Strips FQN prefixes: 'com.example.Foo' → 'Foo'.
+    """
+    import re
+    if not params_str.strip():
+        return []
+    types = []
+    for param in params_str.split(","):
+        param = param.strip()
+        if not param:
+            continue
+        # "int x" → take "int"; "int" → take "int"; "List<String> items" → "List<String>"
+        # Split by whitespace; if last token looks like an identifier (lowercase start,
+        # no generics), it's probably a parameter name
+        tokens = param.split()
+        if len(tokens) >= 2 and not tokens[-1][0].isupper() and "<" not in tokens[-1]:
+            type_part = " ".join(tokens[:-1])
+        else:
+            type_part = param
+        # Strip FQN prefix: com.example.Foo → Foo
+        type_part = re.sub(r"(?:[a-z][a-z0-9]*\.)+", "", type_part)
+        types.append(type_part.strip())
+    return types
+
+
 def _find_matching_method(
     file_path: str,
     result_id: str,
@@ -311,12 +339,14 @@ def _find_matching_method(
 ) -> ExtractedMethod:
     """Find the matching ExtractedMethod for an external retrieval result.
 
-    Strategy:
+    Strategy (progressively looser, stops at first unambiguous match):
     1. Exact path match → candidates from index
     2. Suffix match (handles absolute vs. relative path mismatch)
     3. Single candidate → return it
-    4. Multiple candidates → match by result_id (must be ``classFqn#methodName``
-       or full method signature)
+    4. Exact ID match: result_id == ``classFqn#methodName`` or full signature
+    5. Flexible ID match: result_id contains method name, or method name
+       is extracted from result_id by splitting on common separators
+    6. Simple name match: last segment of result_id after ``#``, ``.``, ``::``
 
     Raises ValueError on no match or ambiguous match — fail-fast so that
     misconfigured retrievers are caught immediately rather than producing
@@ -344,31 +374,69 @@ def _find_matching_method(
     if len(candidates) == 1:
         return candidates[0]
 
-    # 4. Disambiguate by result_id — must be unambiguous
-    if result_id:
-        matches = []
-        for m in candidates:
-            method_id = f"{m.class_fqn}#{m.method_name}"
-            if result_id == method_id or result_id == m.method_signature:
-                matches.append(m)
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            sigs = [m.method_signature for m in matches]
-            raise ValueError(
-                f"Enrichment failed: result_id={result_id!r} matched {len(matches)} "
-                f"methods in {file_path!r} (overloaded?): {sigs}. "
-                f"The external retriever must return an unambiguous ID that "
-                f"distinguishes overloaded methods (e.g. include parameter types)."
-            )
+    if not result_id:
+        candidate_sigs = [f"  {m.class_fqn}#{m.method_name} — {m.method_signature}" for m in candidates]
+        raise ValueError(
+            f"Enrichment failed: {len(candidates)} methods in {file_path!r} and "
+            f"result_id is empty — cannot disambiguate.\n"
+            f"Candidates:\n" + "\n".join(candidate_sigs) + "\n"
+            f"The external retriever must include a stable method identifier in "
+            f"IRetrievalResult.getId()."
+        )
+
+    # 4. Exact ID match: classFqn#methodName or full signature
+    matches = []
+    for m in candidates:
+        method_id = f"{m.class_fqn}#{m.method_name}"
+        if result_id == method_id or result_id == m.method_signature:
+            matches.append(m)
+    if len(matches) == 1:
+        return matches[0]
+
+    # 5. Flexible match: extract a method name from result_id and match
+    #    Handles formats like "com.example.Foo#bar", "Foo::bar", "Foo.bar",
+    #    "bar(int,String)", "com.example.Foo#bar(int, String) -> void", etc.
+    import re
+    # Strip parameter list and return type for name extraction
+    id_clean = re.split(r"[(\s]", result_id, maxsplit=1)[0]
+    # Split by common separators to get the last meaningful segment
+    parts = re.split(r"[#.:]+", id_clean)
+    id_method_name = parts[-1].strip() if parts else ""
+
+    if id_method_name:
+        name_matches = [m for m in candidates if m.method_name == id_method_name]
+        if len(name_matches) == 1:
+            return name_matches[0]
+
+        # If multiple by name (overloads), try matching parameter types from result_id
+        if len(name_matches) > 1:
+            paren_match = re.search(r"\(([^)]*)\)", result_id)
+            if paren_match:
+                id_params_raw = paren_match.group(1).strip()
+                id_types = _extract_param_types(id_params_raw)
+                param_matches = []
+                for m in name_matches:
+                    sig_paren = re.search(r"\(([^)]*)\)", m.method_signature)
+                    if sig_paren:
+                        sig_types = _extract_param_types(sig_paren.group(1).strip())
+                        if id_types == sig_types:
+                            param_matches.append(m)
+                if len(param_matches) == 1:
+                    return param_matches[0]
+
+    # 6. Substring containment: result_id contains method_name or vice versa
+    contains_matches = [m for m in candidates if m.method_name in result_id]
+    if len(contains_matches) == 1:
+        return contains_matches[0]
 
     candidate_sigs = [f"  {m.class_fqn}#{m.method_name} — {m.method_signature}" for m in candidates]
     raise ValueError(
         f"Enrichment failed: {len(candidates)} methods in {file_path!r} and "
         f"result_id={result_id!r} does not uniquely identify one of them.\n"
         f"Candidates:\n" + "\n".join(candidate_sigs) + "\n"
-        f"The external retriever must include a stable method identifier in "
-        f"IRetrievalResult.getId() (e.g. 'classFqn#methodName' or full signature)."
+        f"The external retriever must return an ID that identifies the method.\n"
+        f"Accepted formats: 'classFqn#methodName', 'ClassName#method(ParamType)', "
+        f"full signature, or any string containing a unique method name."
     )
 
 

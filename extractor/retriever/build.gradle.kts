@@ -26,6 +26,7 @@ application {
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
     archiveBaseName.set("method-retriever")
     archiveClassifier.set("")
+    isZip64 = true
     mergeServiceFiles()
     manifest {
         attributes["Main-Class"] = "com.experiment.retriever.cli.RetrieverCli"
