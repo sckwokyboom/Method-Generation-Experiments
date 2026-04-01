@@ -89,7 +89,7 @@ public class SearchExecutor implements AutoCloseable {
                         scoreDoc.score,
                         rank,
                         explainStr,
-                        null
+                        methodBody
                 ));
             }
 

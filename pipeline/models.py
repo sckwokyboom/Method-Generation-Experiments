@@ -154,7 +154,7 @@ class RetrievalResult:
             score=d.get("score", 0.0),
             rank=d.get("rank", 0),
             explain=d.get("explain", ""),
-            content=d.get("content", ""),
+            content=d.get("content") or "",
             tag_scores=d.get("tagScores", {}),
         )
 

@@ -46,6 +46,11 @@ public class LuceneRetrievalResult implements IRetrievalResult {
         return tagScores;
     }
 
+    @Override
+    public String getContent() {
+        return delegate.methodBody();
+    }
+
     public SearchResult getDelegate() {
         return delegate;
     }

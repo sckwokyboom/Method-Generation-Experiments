@@ -37,7 +37,7 @@ public final class SearchResponseAdapter {
                         sr.id(), sr.filePath(), sr.classFqn(), sr.signature(),
                         sr.methodBody(), sr.methodCard(), sr.invocationProfile(),
                         sr.typeProfile(), sr.score(), rank, sr.explain(),
-                        null));
+                        sr.content()));
                 continue;
             }
 

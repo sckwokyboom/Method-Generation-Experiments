@@ -683,11 +683,15 @@ def format_retrieval_augmentation(
         if result.score < score_threshold:
             break
 
-        # If content is pre-formatted, use it as-is
-        if result.content:
+        # Canonical body source: content field first, method_body as fallback
+        body_source = result.content or result.method_body
+
+        # If content is set but no structured fields (external retriever
+        # providing a complete pre-formatted fragment) — use as-is
+        if body_source and not result.signature:
             file_path = result.file_path or "unknown"
             parts.append(f"{FILE_SEP}{file_path}")
-            parts.append(result.content)
+            parts.append(body_source)
             included += 1
             continue
 
@@ -708,11 +712,11 @@ def format_retrieval_augmentation(
         if class_simple:
             fragment_lines.append(f"// Class: {class_simple}")
 
-        # Method signature + body
+        # Method signature + body (sourced from content field)
         sig = _simplify_signature(result.signature)
 
         if include_body:
-            body_lines = _extract_body_lines(result.method_body, max_body)
+            body_lines = _extract_body_lines(body_source, max_body)
         else:
             body_lines = None
 
