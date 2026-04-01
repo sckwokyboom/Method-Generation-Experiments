@@ -137,6 +137,7 @@ class RetrievalResult:
     score: float
     rank: int
     explain: str = ""
+    tag_scores: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> RetrievalResult:
@@ -152,10 +153,11 @@ class RetrievalResult:
             score=d.get("score", 0.0),
             rank=d.get("rank", 0),
             explain=d.get("explain", ""),
+            tag_scores=d.get("tagScores", {}),
         )
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.method_id,
             "filePath": self.file_path,
             "classFqn": self.class_fqn,
@@ -168,6 +170,9 @@ class RetrievalResult:
             "rank": self.rank,
             "explain": self.explain,
         }
+        if self.tag_scores:
+            d["tagScores"] = self.tag_scores
+        return d
 
 
 @dataclass

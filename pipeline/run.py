@@ -208,12 +208,16 @@ def _compute_run_manifest(mode: str, config: Config) -> str:
     }
     if config.retrieval and mode == "retrieval_augmentation":
         manifest["retrieval"] = {
+            "retriever_type": config.retrieval.retriever_type,
             "top_k": config.retrieval.top_k,
             "max_augmentation_tokens": config.retrieval.max_augmentation_tokens,
             "max_results_in_prompt": config.retrieval.max_results_in_prompt,
             "max_body_lines": config.retrieval.max_body_lines,
             "include_body": config.retrieval.include_body,
             "near_duplicate_threshold": config.retrieval.near_duplicate_threshold,
+            "external_retriever_class": config.retrieval.external_retriever_class,
+            "external_retriever_jars": sorted(config.retrieval.external_retriever_jars),
+            "project_source_roots": sorted(config.retrieval.project_source_roots),
         }
     raw = json.dumps(manifest, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -378,10 +382,22 @@ def run_experiment(config: Config) -> None:
             raise ValueError("retrieval_augmentation mode requires 'retrieval' section in config")
         build_index(config)
 
+        # Load full extraction data for enrichment when using external retriever.
+        # The sampled `methods` is a subset; enrichment needs ALL methods to match
+        # external retriever results by file path.
+        all_extraction_methods = None
+        if config.retrieval.retriever_type == "external":
+            extraction_full = load_extraction(config.extraction.output)
+            all_extraction_methods = extraction_full.methods
+            log.info("Loaded %d methods for external enrichment", len(all_extraction_methods))
+
         # Batch search for all samples
         log.info("=== Building retrieval queries for %d samples ===", len(methods))
         requests = [build_search_request(m, config) for m in methods]
-        retrieval_responses = search_batch(requests, config)
+        retrieval_responses = search_batch(
+            requests, config, classpath=classpath,
+            all_methods=all_extraction_methods,
+        )
 
     output_dir = Path(config.output.dir)
     max_concurrent = config.llm.max_concurrent_requests

@@ -1,2 +1,2 @@
 rootProject.name = "java-method-tools"
-include("shared", "extractor-core", "retriever")
+include("shared", "extractor-core", "retriever", "retriever-api")

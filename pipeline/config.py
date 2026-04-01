@@ -54,6 +54,10 @@ class RetrievalConfig:
     include_body: bool = True
     near_duplicate_threshold: float = 0.8
     min_score_ratio: float = 0.3
+    retriever_type: str = "lucene"
+    external_retriever_class: str = ""
+    external_retriever_jars: list[str] = field(default_factory=list)
+    project_source_roots: list[str] = field(default_factory=list)
 
 
 @dataclass

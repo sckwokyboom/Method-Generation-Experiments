@@ -8,6 +8,7 @@ val luceneVersion = "9.12.1"
 
 dependencies {
     implementation(project(":shared"))
+    implementation(project(":retriever-api"))
     implementation("org.apache.lucene:lucene-core:$luceneVersion")
     implementation("org.apache.lucene:lucene-analysis-common:$luceneVersion")
     implementation("org.apache.lucene:lucene-queryparser:$luceneVersion")

@@ -25,7 +25,7 @@ import java.util.concurrent.Callable;
         description = "Indexes and searches Java methods for retrieval-augmented generation",
         mixinStandardHelpOptions = true,
         version = "0.1.0",
-        subcommands = {RetrieverCli.IndexCommand.class, RetrieverCli.SearchBatchCommand.class}
+        subcommands = {RetrieverCli.IndexCommand.class, RetrieverCli.SearchBatchCommand.class, UnifiedSearchCommand.class}
 )
 public class RetrieverCli {
     private static final Logger log = LoggerFactory.getLogger(RetrieverCli.class);
