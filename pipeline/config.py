@@ -91,15 +91,24 @@ class Config:
     compilability: CompilabilityConfig
     output: OutputConfig
     retrieval: RetrievalConfig | None = None
+    retrievers: dict[str, RetrievalConfig] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
         with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
+        retrievers: dict[str, RetrievalConfig] = {}
+        if "retrievers" in raw:
+            for name, ret_raw in raw["retrievers"].items():
+                retrievers[name] = RetrievalConfig(**ret_raw)
+
         retrieval = None
         if "retrieval" in raw:
             retrieval = RetrievalConfig(**raw["retrieval"])
+            # Backward compat: legacy "retrieval" section available as retrievers["default"]
+            if "default" not in retrievers:
+                retrievers["default"] = retrieval
 
         return cls(
             project=ProjectConfig(**raw["project"]),
@@ -110,6 +119,7 @@ class Config:
             compilability=CompilabilityConfig(**raw["compilability"]),
             output=OutputConfig(**raw["output"]),
             retrieval=retrieval,
+            retrievers=retrievers,
         )
 
     def to_dict(self) -> dict:

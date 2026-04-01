@@ -16,7 +16,7 @@ from pathlib import Path
 from pipeline.config import Config
 from pipeline.dataset import build_dataset, load_extraction
 from pipeline.models import ExtractedMethod, RetrievalResponse
-from pipeline.prompt import build_fim_prompt
+from pipeline.prompt import build_fim_prompt, is_retrieval_mode
 from pipeline.retrieval import build_index, build_search_request, search_batch, format_retrieval_augmentation
 
 logging.basicConfig(level=logging.WARNING)
@@ -117,7 +117,7 @@ def print_sample(
         section(f"PROMPT  ({mode})", color=YELLOW)
 
         retrieval_aug = None
-        if mode == "retrieval_augmentation" and retrieval_response and retrieval_config:
+        if is_retrieval_mode(mode) and retrieval_response and retrieval_config:
             retrieval_aug = format_retrieval_augmentation(retrieval_response, retrieval_config)
 
         fim = build_fim_prompt(method, mode, shuffle_seed, retrieval_aug)
@@ -199,13 +199,26 @@ def main():
         to_show = methods[:count]
         start_idx = 0
 
-    # Build retrieval responses if retrieval_augmentation mode is requested
+    # Build retrieval responses for any retrieval mode requested.
+    # For inspect, we use the first retrieval mode found and show its results.
     retrieval_responses: list[RetrievalResponse | None] = [None] * len(methods)
-    has_retrieval = "retrieval_augmentation" in modes
-    if has_retrieval:
-        if config.retrieval is None:
-            print(f"{RED}ERROR: retrieval_augmentation mode requires 'retrieval' section in config{RESET}")
+    retrieval_config_for_inspect = None
+    retrieval_modes_in_inspect = [m for m in modes if is_retrieval_mode(m)]
+    if retrieval_modes_in_inspect:
+        # Use the first retrieval mode to build responses for inspection
+        first_ret_mode = retrieval_modes_in_inspect[0]
+        from pipeline.run import _retrieval_config_for_mode
+        try:
+            retrieval_config_for_inspect = _retrieval_config_for_mode(config, first_ret_mode)
+        except ValueError as e:
+            print(f"{RED}ERROR: {e}{RESET}")
             return
+        if retrieval_config_for_inspect is None:
+            print(f"{RED}ERROR: {first_ret_mode} mode requires a retrieval config{RESET}")
+            return
+        # Temporarily swap config.retrieval for the retrieval.py calls
+        original_retrieval = config.retrieval
+        config.retrieval = retrieval_config_for_inspect
         try:
             build_index(config)
             indices = [start_idx + i for i in range(len(to_show))]
@@ -216,6 +229,8 @@ def main():
         except Exception as e:
             print(f"{RED}WARNING: Retrieval failed: {e}{RESET}")
             print(f"{DIM}Continuing without retrieval results...{RESET}\n")
+        finally:
+            config.retrieval = original_retrieval
 
     print(f"\n{BOLD}Dataset: {len(methods)} methods sampled{RESET}")
     print(f"Showing: {len(to_show)} sample(s) | Modes: {', '.join(modes)}\n")
@@ -229,7 +244,7 @@ def main():
             modes=modes,
             shuffle_seed=config.experiment.shuffle_seed,
             retrieval_response=retrieval_responses[idx],
-            retrieval_config=config.retrieval,
+            retrieval_config=retrieval_config_for_inspect,
         )
 
     if args.json and to_show:

@@ -8,6 +8,20 @@ FIM_PREFIX = "<|fim_prefix|>"
 FIM_SUFFIX = "<|fim_suffix|>"
 FIM_MIDDLE = "<|fim_middle|>"
 
+RAG_MODE_PREFIX = "rag_"
+
+
+def is_retrieval_mode(mode: str) -> bool:
+    """Check if mode is a retrieval-augmentation mode (rag_<name> or legacy)."""
+    return mode.startswith(RAG_MODE_PREFIX) or mode == "retrieval_augmentation"
+
+
+def retriever_name_from_mode(mode: str) -> str:
+    """Extract retriever name from mode: 'rag_lucene' → 'lucene'."""
+    if mode.startswith(RAG_MODE_PREFIX):
+        return mode[len(RAG_MODE_PREFIX):]
+    raise ValueError(f"Cannot extract retriever name from non-rag mode: {mode}")
+
 
 def build_augmentation_block(
     invocations: list[ResolvedInvocation],
@@ -86,7 +100,7 @@ def build_fim_prompt(
     ground_truth = file_content[body_start + 1 : body_end]
 
     cross_file_context = ""
-    if mode == "retrieval_augmentation":
+    if is_retrieval_mode(mode):
         # retrieval_augmentation is not None when the caller is in retrieval mode
         # (may be "" if all results were trimmed for budget). Never fall back to
         # oracle invocation augmentation — that would leak ground-truth data.

@@ -97,9 +97,9 @@ class PairedSample:
         return "neutral"
 
 
-def load_paired_samples(results_dir: Path) -> list[PairedSample]:
+def load_paired_samples(results_dir: Path, retrieval_mode: str = "retrieval_augmentation") -> list[PairedSample]:
     baseline_dir = results_dir / "no_augmentation" / "samples"
-    retrieval_dir = results_dir / "retrieval_augmentation" / "samples"
+    retrieval_dir = results_dir / retrieval_mode / "samples"
 
     if not baseline_dir.exists():
         raise SystemExit(f"No baseline samples at {baseline_dir}")
@@ -454,12 +454,14 @@ renderTable();
 
 def main():
     parser = argparse.ArgumentParser(description="Diagnostic analysis of retrieval vs baseline")
-    parser.add_argument("results_dir", type=Path, help="Results directory with no_augmentation/ and retrieval_augmentation/")
+    parser.add_argument("results_dir", type=Path, help="Results directory with no_augmentation/ and retrieval mode/")
+    parser.add_argument("--retrieval-mode", type=str, default="retrieval_augmentation",
+                        help="Retrieval mode directory to compare against baseline (default: retrieval_augmentation)")
     parser.add_argument("--output", type=Path, default=None, help="HTML report output path")
     parser.add_argument("--threshold", type=float, default=0.02, help="Delta threshold for helped/hurt (default: 0.02)")
     args = parser.parse_args()
 
-    pairs = load_paired_samples(args.results_dir)
+    pairs = load_paired_samples(args.results_dir, args.retrieval_mode)
     log.info("Loaded %d paired samples", len(pairs))
 
     print_terminal_report(pairs, args.results_dir)

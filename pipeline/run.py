@@ -7,6 +7,7 @@ import logging
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from pipeline.metrics import (
 )
 from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult, SampleResult
 from pipeline.normalize import normalize_code
-from pipeline.prompt import build_fim_prompt
+from pipeline.prompt import build_fim_prompt, is_retrieval_mode, retriever_name_from_mode
 from pipeline.report import generate_report, load_sample_result, update_progress, write_sample_result
 from pipeline.retrieval import build_index, build_search_request, format_retrieval_augmentation, search_batch
 from pipeline.tokenizer import count_tokens
@@ -63,6 +64,33 @@ def run_extraction(config: Config) -> None:
     log.info("Extraction complete: %s", extraction_output)
 
 
+def _retrieval_config_for_mode(config: Config, mode: str):
+    """Resolve RetrievalConfig for a given mode, or None if not a retrieval mode."""
+    if mode == "retrieval_augmentation":
+        return config.retrieval  # legacy backward compat
+    if is_retrieval_mode(mode):
+        name = retriever_name_from_mode(mode)  # rag_lucene → lucene
+        ret_cfg = config.retrievers.get(name)
+        if ret_cfg is None:
+            raise ValueError(
+                f"Mode '{mode}' requires retrievers.{name} section in config, "
+                f"available: {list(config.retrievers.keys())}"
+            )
+        return ret_cfg
+    return None
+
+
+@contextmanager
+def _with_retrieval_config(config: Config, ret_cfg):
+    """Temporarily swap config.retrieval so retrieval.py functions use the right config."""
+    original = config.retrieval
+    config.retrieval = ret_cfg
+    try:
+        yield
+    finally:
+        config.retrieval = original
+
+
 def process_sample(
     method: ExtractedMethod,
     mode: str,
@@ -80,9 +108,11 @@ def process_sample(
     # used for metrics and serialization. Original retrieval_response is never mutated.
     retrieval_aug = None
     effective_retrieval: RetrievalResponse | None = None
-    if mode == "retrieval_augmentation" and retrieval_response and config.retrieval:
+    ret_cfg = _retrieval_config_for_mode(config, mode)
+    _is_ret = is_retrieval_mode(mode)  # includes legacy "retrieval_augmentation"
+    if _is_ret and retrieval_response and ret_cfg:
         effective_retrieval = retrieval_response
-        retrieval_aug = format_retrieval_augmentation(effective_retrieval, config.retrieval)
+        retrieval_aug = format_retrieval_augmentation(effective_retrieval, ret_cfg)
 
     fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
 
@@ -103,7 +133,7 @@ def process_sample(
                 search_time_ms=retrieval_response.search_time_ms,
                 query_debug=retrieval_response.query_debug,
             )
-            retrieval_aug = format_retrieval_augmentation(effective_retrieval, config.retrieval)
+            retrieval_aug = format_retrieval_augmentation(effective_retrieval, ret_cfg)
             fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
             prompt_tokens = count_tokens(fim_prompt.full_prompt)
             log.info("[%s] Trimmed augmentation to %d results (%d prompt tokens)",
@@ -131,7 +161,7 @@ def process_sample(
             method.parameter_types, method.return_type,
         )
         metrics.owner_type_recall = owner_type_recall(results, method.invocations)
-    elif mode == "retrieval_augmentation":
+    elif _is_ret:
         # Zero-hit retrieval: count as 0.0 instead of None so that
         # aggregate metrics don't silently drop these samples.
         metrics.recall_at_k = 0.0
@@ -206,18 +236,19 @@ def _compute_run_manifest(mode: str, config: Config) -> str:
         "sample_count": config.dataset.sample_count,
         "random_seed": config.dataset.random_seed,
     }
-    if config.retrieval and mode == "retrieval_augmentation":
+    ret_cfg = _retrieval_config_for_mode(config, mode)
+    if ret_cfg:
         manifest["retrieval"] = {
-            "retriever_type": config.retrieval.retriever_type,
-            "top_k": config.retrieval.top_k,
-            "max_augmentation_tokens": config.retrieval.max_augmentation_tokens,
-            "max_results_in_prompt": config.retrieval.max_results_in_prompt,
-            "max_body_lines": config.retrieval.max_body_lines,
-            "include_body": config.retrieval.include_body,
-            "near_duplicate_threshold": config.retrieval.near_duplicate_threshold,
-            "external_retriever_class": config.retrieval.external_retriever_class,
-            "external_retriever_jars": sorted(config.retrieval.external_retriever_jars),
-            "project_source_roots": sorted(config.retrieval.project_source_roots),
+            "retriever_type": ret_cfg.retriever_type,
+            "top_k": ret_cfg.top_k,
+            "max_augmentation_tokens": ret_cfg.max_augmentation_tokens,
+            "max_results_in_prompt": ret_cfg.max_results_in_prompt,
+            "max_body_lines": ret_cfg.max_body_lines,
+            "include_body": ret_cfg.include_body,
+            "near_duplicate_threshold": ret_cfg.near_duplicate_threshold,
+            "external_retriever_class": ret_cfg.external_retriever_class,
+            "external_retriever_jars": sorted(ret_cfg.external_retriever_jars),
+            "project_source_roots": sorted(ret_cfg.project_source_roots),
         }
     raw = json.dumps(manifest, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -374,30 +405,35 @@ def run_experiment(config: Config) -> None:
     methods, classpath = build_dataset(config)
     log.info("Dataset: %d methods, %d classpath entries", len(methods), len(classpath))
 
-    # Build retrieval index if needed
-    has_retrieval = "retrieval_augmentation" in config.experiment.modes
-    retrieval_responses: list[RetrievalResponse | None] | None = None
-    if has_retrieval:
-        if config.retrieval is None:
-            raise ValueError("retrieval_augmentation mode requires 'retrieval' section in config")
-        build_index(config)
+    # Build retrieval indexes and batch-search for each retrieval mode
+    retrieval_modes = [m for m in config.experiment.modes if is_retrieval_mode(m)]
+    retrieval_responses_map: dict[str, list[RetrievalResponse | None]] = {}
 
-        # Load full extraction data for enrichment when using external retriever.
-        # The sampled `methods` is a subset; enrichment needs ALL methods to match
-        # external retriever results by file path.
-        all_extraction_methods = None
-        if config.retrieval.retriever_type == "external":
-            extraction_full = load_extraction(config.extraction.output)
-            all_extraction_methods = extraction_full.methods
-            log.info("Loaded %d methods for external enrichment", len(all_extraction_methods))
+    for ret_mode in retrieval_modes:
+        ret_cfg = _retrieval_config_for_mode(config, ret_mode)
+        # _retrieval_config_for_mode raises ValueError if rag_<name> has no config
 
-        # Batch search for all samples
-        log.info("=== Building retrieval queries for %d samples ===", len(methods))
-        requests = [build_search_request(m, config) for m in methods]
-        retrieval_responses = search_batch(
-            requests, config, classpath=classpath,
-            all_methods=all_extraction_methods,
-        )
+        log.info("=== Setting up retrieval for mode: %s (type=%s) ===",
+                 ret_mode, ret_cfg.retriever_type)
+
+        with _with_retrieval_config(config, ret_cfg):
+            build_index(config)
+
+            # Load full extraction data for enrichment when using external retriever.
+            all_extraction_methods = None
+            if ret_cfg.retriever_type == "external":
+                extraction_full = load_extraction(config.extraction.output)
+                all_extraction_methods = extraction_full.methods
+                log.info("Loaded %d methods for external enrichment", len(all_extraction_methods))
+
+            log.info("=== Building retrieval queries for %d samples (%s) ===",
+                     len(methods), ret_mode)
+            requests = [build_search_request(m, config) for m in methods]
+            responses = search_batch(
+                requests, config, classpath=classpath,
+                all_methods=all_extraction_methods,
+            )
+            retrieval_responses_map[ret_mode] = responses
 
     output_dir = Path(config.output.dir)
     max_concurrent = config.llm.max_concurrent_requests
@@ -409,7 +445,7 @@ def run_experiment(config: Config) -> None:
         samples_dir = mode_dir / "samples"
         samples_dir.mkdir(parents=True, exist_ok=True)
 
-        mode_retrieval = retrieval_responses if mode == "retrieval_augmentation" else None
+        mode_retrieval = retrieval_responses_map.get(mode)
 
         if max_concurrent > 1:
             mode_results = _run_mode_concurrent(
