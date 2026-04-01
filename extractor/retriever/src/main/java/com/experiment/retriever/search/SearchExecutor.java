@@ -63,8 +63,7 @@ public class SearchExecutor implements AutoCloseable {
                         : -1;
                 String methodBody = doc.get(FieldConstants.METHOD_BODY);
 
-                if (filter.shouldExclude(filePath, classFqn, bodyStartOffset,
-                        methodBody, targetMethodBody)) {
+                if (filter.shouldExclude(filePath, classFqn, bodyStartOffset)) {
                     continue;
                 }
 
@@ -89,7 +88,8 @@ public class SearchExecutor implements AutoCloseable {
                         doc.get(FieldConstants.TYPE_PROFILE),
                         scoreDoc.score,
                         rank,
-                        explainStr
+                        explainStr,
+                        null
                 ));
             }
 

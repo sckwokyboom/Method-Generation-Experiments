@@ -6,6 +6,7 @@ import com.experiment.retriever.api.*;
 import com.experiment.retriever.external.ExternalRetrieverLoader;
 import com.experiment.retriever.model.SearchRequest;
 import com.experiment.retriever.model.SearchResponse;
+import com.experiment.retriever.search.LeakageFilter;
 import com.experiment.retriever.search.SearchExecutor;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -177,6 +178,18 @@ public class UnifiedSearchCommand implements Callable<Integer> {
             try {
                 IRetrieveRequest request = entry.toRetrieveRequest();
                 List<IRetrievalResult> results = retriever.search(request);
+
+                // Apply leakage filter: exclude results from the target file
+                // (its content is already visible via FIM prefix/suffix)
+                LeakageFilter filter = new LeakageFilter(entry.filePath());
+                int beforeSize = results.size();
+                results = results.stream()
+                        .filter(r -> !filter.shouldExclude(r))
+                        .toList();
+                if (results.size() < beforeSize) {
+                    log.info("Leakage filter removed {} result(s) for request {}/{}",
+                            beforeSize - results.size(), i + 1, entries.size());
+                }
 
                 // Limit to topK
                 if (results.size() > topK) {

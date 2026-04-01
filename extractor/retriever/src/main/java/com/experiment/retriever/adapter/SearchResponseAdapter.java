@@ -36,7 +36,8 @@ public final class SearchResponseAdapter {
                 searchResults.add(new SearchResult(
                         sr.id(), sr.filePath(), sr.classFqn(), sr.signature(),
                         sr.methodBody(), sr.methodCard(), sr.invocationProfile(),
-                        sr.typeProfile(), sr.score(), rank, sr.explain()));
+                        sr.typeProfile(), sr.score(), rank, sr.explain(),
+                        null));
                 continue;
             }
 
@@ -54,7 +55,8 @@ public final class SearchResponseAdapter {
                     "", // typeProfile
                     result.getScore(),
                     rank,
-                    explain
+                    explain,
+                    result.getContent()
             ));
         }
 

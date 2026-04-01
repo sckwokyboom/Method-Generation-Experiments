@@ -16,4 +16,15 @@ public interface IRetrievalResult {
     float getScore();
 
     Map<TypeSourceRetrieveTag, Float> getTagScores();
+
+    /**
+     * Optional pre-formatted content for augmentation.
+     * When non-null, this text is used as-is in the prompt without
+     * reconstruction from structured fields (signature, body, class, etc.).
+     *
+     * @return the content string, or {@code null} if not available
+     */
+    default String getContent() {
+        return null;
+    }
 }

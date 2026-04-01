@@ -137,6 +137,7 @@ class RetrievalResult:
     score: float
     rank: int
     explain: str = ""
+    content: str = ""
     tag_scores: dict[str, float] = field(default_factory=dict)
 
     @classmethod
@@ -153,6 +154,7 @@ class RetrievalResult:
             score=d.get("score", 0.0),
             rank=d.get("rank", 0),
             explain=d.get("explain", ""),
+            content=d.get("content", ""),
             tag_scores=d.get("tagScores", {}),
         )
 
@@ -170,6 +172,8 @@ class RetrievalResult:
             "rank": self.rank,
             "explain": self.explain,
         }
+        if self.content:
+            d["content"] = self.content
         if self.tag_scores:
             d["tagScores"] = self.tag_scores
         return d

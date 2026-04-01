@@ -683,6 +683,14 @@ def format_retrieval_augmentation(
         if result.score < score_threshold:
             break
 
+        # If content is pre-formatted, use it as-is
+        if result.content:
+            file_path = result.file_path or "unknown"
+            parts.append(f"{FILE_SEP}{file_path}")
+            parts.append(result.content)
+            included += 1
+            continue
+
         # Convert class FQN to file path: com.example.Foo -> com/example/Foo.java
         file_path = result.file_path or (result.class_fqn.replace(".", "/") + ".java")
 

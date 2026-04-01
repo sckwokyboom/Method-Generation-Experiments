@@ -13,5 +13,6 @@ public record SearchResult(
         @JsonProperty("typeProfile") String typeProfile,
         @JsonProperty("score") float score,
         @JsonProperty("rank") int rank,
-        @JsonProperty("explain") String explain
+        @JsonProperty("explain") String explain,
+        @JsonProperty("content") String content
 ) {}
