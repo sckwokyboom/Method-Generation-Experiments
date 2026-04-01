@@ -115,6 +115,8 @@ code { font-family:inherit; }
 .mode-badge.retrieval_augmentation { background:#89b4fa; color:#1e1e2e; }
 .mode-badge.ordered_augmentation { background:#a6e3a1; color:#1e1e2e; }
 .mode-badge.shuffled_augmentation { background:#f9e2af; color:#1e1e2e; }
+/* Dynamic rag_* modes get a default badge color via JS */
+[class*="mode-badge.rag_"] { background:#74c7ec; color:#1e1e2e; }
 .compare-row { display:flex; gap:16px; margin-bottom:16px; }
 .compare-col { flex:1; min-width:0; }
 .compare-col h4 { margin-bottom:8px; color:var(--subtext); font-size:12px; }
@@ -245,17 +247,22 @@ function renderRetrievalTab() {
     const s = getSample();
     if (!s) return '<div>No sample selected</div>';
 
-    // Find the retrieval_augmentation mode data
-    const retData = s['retrieval_augmentation'];
-    if (!retData || !retData.retrieval_results) {
-        return '<div style="color:var(--subtext)">No retrieval data for this sample. Only available in retrieval_augmentation mode.</div>';
+    // Find any retrieval mode data (rag_*, retrieval_augmentation, etc.)
+    const retModes = Object.keys(s).filter(m => m.startsWith('rag_') || m === 'retrieval_augmentation');
+    let retData = null;
+    let retModeName = '';
+    for (const rm of retModes) {
+        if (s[rm] && s[rm].retrieval_results) { retData = s[rm]; retModeName = rm; break; }
+    }
+    if (!retData) {
+        return '<div style="color:var(--subtext)">No retrieval data for this sample. Requires a rag_* or retrieval_augmentation mode.</div>';
     }
 
-    let html = '';
+    let html = `<div class="section-title" style="color:#89b4fa">Retrieval mode: ${retModeName}</div>`;
 
     // Query debug
     if (retData.retrieval_query) {
-        html += '<div class="section-title">Lucene Query</div>';
+        html += '<div class="section-title">Search Query</div>';
         html += `<div class="query-debug">${escapeHtml(retData.retrieval_query)}</div>`;
     }
 

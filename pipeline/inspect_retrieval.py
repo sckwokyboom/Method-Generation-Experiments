@@ -161,11 +161,33 @@ def main():
     parser.add_argument("--n", type=int, default=None, help="Number of samples (default: all)")
     parser.add_argument("--output", default=None, help="Output HTML path")
     parser.add_argument("--skip-extraction", action="store_true")
+    parser.add_argument("--retrieval-mode", default=None,
+                        help="Retrieval mode to inspect (e.g. rag_lucene). Default: first available.")
     args = parser.parse_args()
 
     config = Config.load(args.config)
-    if config.retrieval is None:
-        raise SystemExit("Config must have a 'retrieval' section")
+
+    # Resolve which retrieval config to use
+    from pipeline.prompt import is_retrieval_mode
+    from pipeline.run import _retrieval_config_for_mode
+    ret_mode = args.retrieval_mode
+    if ret_mode is None:
+        # Auto-detect: first rag_* mode from config, or fallback to retrieval_augmentation
+        candidates = [m for m in config.experiment.modes if is_retrieval_mode(m)]
+        if candidates:
+            ret_mode = candidates[0]
+        elif config.retrieval is not None:
+            ret_mode = "retrieval_augmentation"
+        else:
+            raise SystemExit("Config must have a 'retrieval' or 'retrievers' section")
+    ret_cfg = _retrieval_config_for_mode(config, ret_mode)
+    if ret_cfg is None:
+        raise SystemExit(f"No retrieval config found for mode '{ret_mode}'")
+    log.info("Inspecting retrieval mode: %s (type=%s)", ret_mode, ret_cfg.retriever_type)
+
+    # Swap config.retrieval for retrieval.py calls
+    original_retrieval = config.retrieval
+    config.retrieval = ret_cfg
 
     methods, classpath = build_dataset(config)
     count = min(args.n, len(methods)) if args.n else len(methods)
@@ -180,11 +202,13 @@ def main():
     log.info("Running batch search...")
     responses = search_batch(requests, config)
 
+    config.retrieval = original_retrieval  # restore
+
     log.info("Building inspection data...")
     samples = []
     for i, (method, req, resp) in enumerate(zip(methods, requests, responses)):
-        aug = format_retrieval_augmentation(resp, config.retrieval)
-        fim_ret = build_fim_prompt(method, "retrieval_augmentation", config.experiment.shuffle_seed, aug)
+        aug = format_retrieval_augmentation(resp, ret_cfg)
+        fim_ret = build_fim_prompt(method, ret_mode, config.experiment.shuffle_seed, aug)
         fim_no = build_fim_prompt(method, "no_augmentation", config.experiment.shuffle_seed)
 
         samples.append({
@@ -376,7 +400,7 @@ function renderPrompt() {
   const s = DATA[cur];
   return `
     <div class="section">
-      <div class="section-title">Full FIM Prompt (retrieval_augmentation)
+      <div class="section-title">Full FIM Prompt (with retrieval)
         <span class="badge badge-blue">${s.prompt_retrieval_len} chars</span>
         <span class="badge badge-mauve">~${Math.round(s.prompt_retrieval_len/4)} tokens</span>
       </div>
