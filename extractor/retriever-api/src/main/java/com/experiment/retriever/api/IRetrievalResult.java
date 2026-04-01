@@ -5,7 +5,7 @@ import java.util.Map;
 
 /**
  * A single retrieval result: a scored reference to a source location
- * with optional per-tag score breakdown.
+ * with content for augmentation and optional per-tag score breakdown.
  */
 public interface IRetrievalResult {
 
@@ -18,13 +18,14 @@ public interface IRetrievalResult {
     Map<TypeSourceRetrieveTag, Float> getTagScores();
 
     /**
-     * Optional pre-formatted content for augmentation.
-     * When non-null, this text is used as-is in the prompt without
-     * reconstruction from structured fields (signature, body, class, etc.).
+     * Content to be used for augmentation. Every retrieval result must
+     * provide this — it is the canonical source for what gets added to
+     * the model prompt.
      *
-     * @return the content string, or {@code null} if not available
+     * <p>For method-level retrieval this is typically the full method body.
+     * External retrievers may return arbitrary pre-formatted text.
+     *
+     * @return the content string, never {@code null}
      */
-    default String getContent() {
-        return null;
-    }
+    String getContent();
 }

@@ -223,6 +223,22 @@ def process_sample(
     )
 
 
+def _hash_file(path: Path) -> str:
+    """Return SHA-256 hex digest of a file, or empty string if missing."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+# Python source files whose content affects generated prompts / augmentations.
+# A change in any of them invalidates the sample cache.
+_PROMPT_AFFECTING_SOURCES = [
+    Path(__file__).parent / "retrieval.py",
+    Path(__file__).parent / "prompt.py",
+]
+
+
 def _compute_run_manifest(mode: str, config: Config) -> str:
     """Compute a hash that captures all parameters affecting sample outputs."""
     manifest = {
@@ -250,6 +266,11 @@ def _compute_run_manifest(mode: str, config: Config) -> str:
             "external_retriever_jars": sorted(ret_cfg.external_retriever_jars),
             "project_source_roots": sorted(ret_cfg.project_source_roots),
         }
+    # Include hashes of source files that affect prompt / augmentation formatting
+    # so that code changes invalidate the cache automatically.
+    manifest["_source_hashes"] = {
+        src.name: _hash_file(src) for src in _PROMPT_AFFECTING_SOURCES
+    }
     raw = json.dumps(manifest, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()
 
