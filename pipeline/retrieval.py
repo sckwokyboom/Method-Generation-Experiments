@@ -429,6 +429,30 @@ def _find_matching_method(
     if len(contains_matches) == 1:
         return contains_matches[0]
 
+    # 7. Ambiguous fallback: pick the best candidate rather than crashing.
+    #    For overloaded methods where the retriever doesn't specify params,
+    #    prefer the most specific overload (most parameters) as it's more
+    #    likely to be the interesting one. Log a warning for diagnostics.
+    fallback_pool = name_matches if (id_method_name and name_matches) else contains_matches or candidates
+    if fallback_pool:
+        # Sort by parameter count descending (more specific first)
+        def _param_count(m: ExtractedMethod) -> int:
+            import re as _re
+            pm = _re.search(r"\(([^)]*)\)", m.method_signature)
+            if pm and pm.group(1).strip():
+                return len(pm.group(1).split(","))
+            return 0
+        chosen = sorted(fallback_pool, key=_param_count, reverse=True)[0]
+        candidate_sigs = [m.method_signature for m in fallback_pool]
+        log.warning(
+            "Enrichment ambiguity: result_id=%r matched %d methods in %s — "
+            "picked %r (most params). Candidates: %s. "
+            "For precise matching, include param types in IRetrievalResult.getId().",
+            result_id, len(fallback_pool), file_path,
+            chosen.method_signature, candidate_sigs,
+        )
+        return chosen
+
     candidate_sigs = [f"  {m.class_fqn}#{m.method_name} — {m.method_signature}" for m in candidates]
     raise ValueError(
         f"Enrichment failed: {len(candidates)} methods in {file_path!r} and "
