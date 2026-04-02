@@ -61,8 +61,16 @@ def run_extraction(config: Config) -> None:
     log.info("Running extractor: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
-        log.error("Extractor stderr:\n%s", result.stderr)
-        raise RuntimeError(f"Extractor failed with exit code {result.returncode}")
+        log.error("Extractor failed (exit code %d)", result.returncode)
+        if result.stdout:
+            log.error("Extractor stdout:\n%s", result.stdout[-3000:])
+        if result.stderr:
+            log.error("Extractor stderr:\n%s", result.stderr[-3000:])
+        raise RuntimeError(
+            f"Extractor failed with exit code {result.returncode}.\n"
+            f"stdout: {result.stdout[-1000:]}\n"
+            f"stderr: {result.stderr[-1000:]}"
+        )
     log.info("Extraction complete: %s", extraction_output)
 
 

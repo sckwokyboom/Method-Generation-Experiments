@@ -94,12 +94,21 @@ public class ExtractorCli implements Callable<Integer> {
             command = List.of("gradle", "compileJava");
         }
 
+        log.info("Build command: {}", command);
         try {
             ProcessBuilder pb = new ProcessBuilder(command)
                     .directory(projectPath.toFile())
-                    .inheritIO();
+                    .redirectErrorStream(true);
             Process process = pb.start();
-            return process.waitFor() == 0;
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                log.error("Build failed (exit code {}). Output:\n{}", exitCode,
+                        output.length() > 3000 ? output.substring(output.length() - 3000) : output);
+            } else {
+                log.info("Build completed successfully");
+            }
+            return exitCode == 0;
         } catch (IOException | InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("Build execution failed", e);
