@@ -8,11 +8,13 @@ import java.nio.file.Path;
 public final class LeakageFilter {
 
     private final String targetFilePath;
+    private final Path targetPath;
     private final String targetClassFqn;
     private final int targetBodyStartOffset;
 
     public LeakageFilter(SearchRequest request) {
         this.targetFilePath = request.targetFilePath();
+        this.targetPath = Path.of(targetFilePath);
         this.targetClassFqn = request.classFqn();
         this.targetBodyStartOffset = request.targetBodyStartOffset();
     }
@@ -23,6 +25,7 @@ public final class LeakageFilter {
      */
     public LeakageFilter(String targetFilePath) {
         this.targetFilePath = targetFilePath;
+        this.targetPath = Path.of(targetFilePath);
         this.targetClassFqn = "";
         this.targetBodyStartOffset = -1;
     }
@@ -32,21 +35,20 @@ public final class LeakageFilter {
      * The only real leakage is a result from the same file — in a real
      * FIM scenario that file's content is already in prefix/suffix, not
      * in the retriever's output.
+     *
+     * Uses {@link Path#endsWith(Path)} for component-level comparison,
+     * which correctly handles relative-vs-absolute path mismatches.
      */
     public boolean shouldExclude(IRetrievalResult result) {
         Path location = result.getLocation();
         if (location != null) {
-            String path = location.toString();
-            if (path.equals(targetFilePath) || pathEndsWith(path, targetFilePath)
-                    || pathEndsWith(targetFilePath, path)) {
+            if (location.equals(targetPath)
+                    || location.endsWith(targetPath)
+                    || targetPath.endsWith(location)) {
                 return true;
             }
         }
         return false;
-    }
-
-    private static boolean pathEndsWith(String longer, String shorter) {
-        return longer.endsWith("/" + shorter) || longer.endsWith("\\" + shorter);
     }
 
     public boolean shouldExclude(String filePath, String classFqn, int bodyStartOffset) {
