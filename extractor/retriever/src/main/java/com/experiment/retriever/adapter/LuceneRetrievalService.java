@@ -43,6 +43,9 @@ public class LuceneRetrievalService implements IRetrievalService, AutoCloseable 
 
     @Override
     public List<IRetrievalResult> search(IRetrieveRequest retrieveRequest) {
+        log.debug("Adapter search: location={}, offset={}, topK={}",
+                retrieveRequest.getLocation(), retrieveRequest.getOffset(), topK);
+
         SearchRequest searchRequest = toSearchRequest(retrieveRequest);
         String targetBody = extractTargetBody(retrieveRequest);
         SearchResponse response = executor.search(searchRequest, targetBody);
@@ -51,6 +54,16 @@ public class LuceneRetrievalService implements IRetrievalService, AutoCloseable 
         for (SearchResult sr : response.results()) {
             results.add(new LuceneRetrievalResult(sr));
         }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Adapter returned {} results", results.size());
+            int limit = Math.min(results.size(), 3);
+            for (int i = 0; i < limit; i++) {
+                IRetrievalResult r = results.get(i);
+                log.debug("  top-{}: id={}, score={}", i + 1, r.getId(), String.format("%.4f", r.getScore()));
+            }
+        }
+
         return results;
     }
 

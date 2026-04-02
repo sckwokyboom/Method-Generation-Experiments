@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import org.slf4j.MDC;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -109,23 +111,29 @@ public class UnifiedSearchCommand implements Callable<Integer> {
         try (SearchExecutor executor = new SearchExecutor(indexDir)) {
             for (int i = 0; i < entries.size(); i++) {
                 RetrieverCli.BatchEntry entry = entries.get(i);
-                SearchRequest request = entry.request();
+                MDC.put("requestIndex", String.valueOf(i + 1));
+                MDC.put("targetFile", entry.request().targetFilePath());
+                try {
+                    SearchRequest request = entry.request();
 
-                SearchRequest effectiveRequest = request.topK() > 0 ? request :
-                        new SearchRequest(
-                                request.methodSignature(), request.classFqn(),
-                                request.supertypes(), request.imports(),
-                                request.classFields(), request.siblingSignatures(),
-                                request.siblingOwnerTypes(), request.siblingUsedTypes(),
-                                request.fimPrefix(), request.fimSuffix(),
-                                request.targetFilePath(), request.targetBodyStartOffset(),
-                                topK, request.nearDuplicateThreshold()
-                        );
+                    SearchRequest effectiveRequest = request.topK() > 0 ? request :
+                            new SearchRequest(
+                                    request.methodSignature(), request.classFqn(),
+                                    request.supertypes(), request.imports(),
+                                    request.classFields(), request.siblingSignatures(),
+                                    request.siblingOwnerTypes(), request.siblingUsedTypes(),
+                                    request.fimPrefix(), request.fimSuffix(),
+                                    request.targetFilePath(), request.targetBodyStartOffset(),
+                                    topK, request.nearDuplicateThreshold()
+                            );
 
-                responses.add(executor.search(effectiveRequest, entry.targetMethodBody()));
+                    responses.add(executor.search(effectiveRequest, entry.targetMethodBody()));
 
-                if ((i + 1) % 10 == 0 || i == entries.size() - 1) {
-                    log.info("Processed {}/{} queries", i + 1, entries.size());
+                    if ((i + 1) % 10 == 0 || i == entries.size() - 1) {
+                        log.info("Processed {}/{} queries", i + 1, entries.size());
+                    }
+                } finally {
+                    MDC.clear();
                 }
             }
         }
@@ -173,6 +181,8 @@ public class UnifiedSearchCommand implements Callable<Integer> {
         List<SearchResponse> responses = new ArrayList<>();
         for (int i = 0; i < entries.size(); i++) {
             ExternalBatchEntry entry = entries.get(i);
+            MDC.put("requestIndex", String.valueOf(i + 1));
+            MDC.put("targetFile", entry.filePath());
             long startMs = System.currentTimeMillis();
 
             try {
@@ -207,6 +217,8 @@ public class UnifiedSearchCommand implements Callable<Integer> {
                         + " (file: " + entry.filePath()
                         + ", bodyStartOffset: " + entry.bodyStartOffset()
                         + ", bodyEndOffset: " + entry.bodyEndOffset() + ")", e);
+            } finally {
+                MDC.clear();
             }
 
             if ((i + 1) % 10 == 0 || i == entries.size() - 1) {

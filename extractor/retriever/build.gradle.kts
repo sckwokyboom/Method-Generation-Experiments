@@ -17,6 +17,10 @@ dependencies {
     implementation("info.picocli:picocli:4.7.6")
     implementation("org.slf4j:slf4j-api:2.0.16")
     runtimeOnly("ch.qos.logback:logback-classic:1.5.16")
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.assertj:assertj-core:3.27.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 application {
@@ -37,6 +41,10 @@ tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJ
     exclude("META-INF/*.RSA")
     exclude("META-INF/*.DSA")
     exclude("META-INF/INDEX.LIST")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 tasks.named("jar") {

@@ -44,7 +44,15 @@ public class SearchExecutor implements AutoCloseable {
 
         try {
             int fetchCount = topK * 3 + 10;
+            if (log.isDebugEnabled()) {
+                String queryStr = queryDebug.length() > 200 ? queryDebug.substring(0, 200) + "..." : queryDebug;
+                log.debug("Searching: topK={}, fetchCount={}, query={}", topK, fetchCount, queryStr);
+            }
+
             TopDocs topDocs = searcher.search(query, fetchCount);
+            @SuppressWarnings("deprecation")
+            int totalHitCount = Math.toIntExact(topDocs.totalHits.value);
+            log.debug("Lucene returned {} total hits", totalHitCount);
 
             LeakageFilter filter = new LeakageFilter(request);
             List<SearchResult> results = new ArrayList<>();
@@ -64,11 +72,13 @@ public class SearchExecutor implements AutoCloseable {
                 String methodBody = doc.get(FieldConstants.METHOD_BODY);
 
                 if (filter.shouldExclude(filePath, classFqn, bodyStartOffset)) {
+                    log.trace("Filtered (leakage): score={}, class={}, file={}", scoreDoc.score, classFqn, filePath);
                     continue;
                 }
 
                 int count = classCount.getOrDefault(classFqn, 0);
                 if (count >= maxPerClass) {
+                    log.trace("Filtered (class limit): score={}, class={}", scoreDoc.score, classFqn);
                     continue;
                 }
                 classCount.put(classFqn, count + 1);
@@ -77,11 +87,16 @@ public class SearchExecutor implements AutoCloseable {
                 String explainStr = summarizeExplanation(query, scoreDoc.doc);
 
                 rank++;
+                String signature = doc.get(FieldConstants.SIGNATURE);
+                log.debug("Result #{}: score={}, class={}, signature={}",
+                        rank, String.format("%.4f", scoreDoc.score), classFqn,
+                        signature != null && signature.length() > 80 ? signature.substring(0, 80) + "..." : signature);
+
                 results.add(new SearchResult(
                         doc.get(FieldConstants.ID),
                         filePath,
                         classFqn,
-                        doc.get(FieldConstants.SIGNATURE),
+                        signature,
                         methodBody,
                         doc.get(FieldConstants.METHOD_CARD),
                         doc.get(FieldConstants.INVOCATION_PROFILE),
@@ -94,8 +109,9 @@ public class SearchExecutor implements AutoCloseable {
             }
 
             long elapsed = System.currentTimeMillis() - startMs;
-            @SuppressWarnings("deprecation")
-            int totalHitCount = Math.toIntExact(topDocs.totalHits.value);
+            log.debug("Search completed: {} results in {}ms (top score: {})",
+                    results.size(), elapsed,
+                    results.isEmpty() ? "N/A" : String.format("%.4f", results.get(0).score()));
             return new SearchResponse(results, totalHitCount, elapsed, queryDebug);
 
         } catch (IOException e) {
