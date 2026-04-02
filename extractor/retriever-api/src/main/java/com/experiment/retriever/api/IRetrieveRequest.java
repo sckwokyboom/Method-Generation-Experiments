@@ -15,4 +15,12 @@ public interface IRetrieveRequest {
     String getUserPrompt();
 
     Path getLocation();
+
+    /**
+     * Desired number of results. Implementations may use this as a hint.
+     * Returns 0 when unset (retriever decides).
+     */
+    default int getTopK() {
+        return 0;
+    }
 }

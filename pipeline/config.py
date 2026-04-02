@@ -49,7 +49,7 @@ class RetrievalConfig:
     index_dir: str
     top_k: int = 5
     max_augmentation_tokens: int = 2048
-    max_results_in_prompt: int = 5
+    max_results_in_prompt: int = -1  # -1 → defaults to top_k
     max_body_lines: int = 50
     include_body: bool = True
     near_duplicate_threshold: float = 0.8
@@ -58,6 +58,10 @@ class RetrievalConfig:
     external_retriever_class: str = ""
     external_retriever_jars: list[str] = field(default_factory=list)
     project_source_roots: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.max_results_in_prompt < 0:
+            self.max_results_in_prompt = self.top_k
 
 
 @dataclass

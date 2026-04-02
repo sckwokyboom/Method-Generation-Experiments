@@ -245,7 +245,7 @@ def _search_batch_external(
             "--project-config", project_config_path,
             "--requests", req_path,
             "--output", res_path,
-            "--top-k", str(retrieval.top_k),
+            "--top-k", str(retrieval.top_k + 3),
         ]
 
         if retrieval.external_retriever_jars:

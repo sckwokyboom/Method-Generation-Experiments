@@ -176,7 +176,7 @@ public class UnifiedSearchCommand implements Callable<Integer> {
             long startMs = System.currentTimeMillis();
 
             try {
-                IRetrieveRequest request = entry.toRetrieveRequest();
+                IRetrieveRequest request = entry.toRetrieveRequest(topK);
                 List<IRetrievalResult> results = retriever.search(request);
 
                 // Apply leakage filter: exclude results from the target file
@@ -235,13 +235,14 @@ public class UnifiedSearchCommand implements Callable<Integer> {
             @JsonProperty("userPrompt") String userPrompt,
             @JsonProperty("targetMethodBody") String targetMethodBody
     ) {
-        IRetrieveRequest toRetrieveRequest() {
+        IRetrieveRequest toRetrieveRequest(int topK) {
             IMaskingVariant masking = SimpleMaskingVariant.fromBodyOffsets(
                     sourceCode, bodyStartOffset, bodyEndOffset);
             return new RetrieveRequestWithMaskingVariant(
                     sourceCode, masking,
                     userPrompt != null ? userPrompt : "",
-                    Path.of(filePath));
+                    Path.of(filePath),
+                    topK);
         }
     }
 }

@@ -14,16 +14,27 @@ public class RetrieveRequestWithMaskingVariant implements IRetrieveRequest {
     private final IMaskingVariant maskingVariant;
     private final String userPrompt;
     private final Path location;
+    private final int topK;
 
     public RetrieveRequestWithMaskingVariant(
             String sourceCode,
             IMaskingVariant maskingVariant,
             String userPrompt,
             Path location) {
+        this(sourceCode, maskingVariant, userPrompt, location, 0);
+    }
+
+    public RetrieveRequestWithMaskingVariant(
+            String sourceCode,
+            IMaskingVariant maskingVariant,
+            String userPrompt,
+            Path location,
+            int topK) {
         this.sourceCode = Objects.requireNonNull(sourceCode, "sourceCode");
         this.maskingVariant = Objects.requireNonNull(maskingVariant, "maskingVariant");
         this.userPrompt = userPrompt != null ? userPrompt : "";
         this.location = Objects.requireNonNull(location, "location");
+        this.topK = topK;
     }
 
     @Override
@@ -44,6 +55,11 @@ public class RetrieveRequestWithMaskingVariant implements IRetrieveRequest {
     @Override
     public Path getLocation() {
         return location;
+    }
+
+    @Override
+    public int getTopK() {
+        return topK;
     }
 
     public IMaskingVariant getMaskingVariant() {
