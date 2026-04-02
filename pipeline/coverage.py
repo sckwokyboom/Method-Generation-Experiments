@@ -234,26 +234,16 @@ def run_jacoco_gradle(
     # Create a temporary init script to inject JaCoCo
     init_script = project_path / "jacoco-init.gradle"
     init_script.write_text("""\
-projectsEvaluated {
-    rootProject.allprojects { proj ->
-        if (proj.plugins.hasPlugin('java') && !proj.plugins.hasPlugin('jacoco')) {
-            proj.apply plugin: 'jacoco'
+allprojects {
+    pluginManager.withPlugin('java') {
+        apply plugin: 'jacoco'
+        tasks.withType(Test) {
+            jacoco { enabled = true }
         }
-        if (proj.plugins.hasPlugin('jacoco')) {
-            proj.tasks.withType(Test) {
-                jacoco { enabled = true }
-            }
-            if (!proj.tasks.names.contains('jacocoXmlReport')) {
-                proj.tasks.create('jacocoXmlReport', JacocoReport) {
-                    dependsOn proj.tasks.named('test')
-                    reports {
-                        xml.required = true
-                        html.required = false
-                    }
-                    executionData.from(proj.fileTree("${proj.buildDir}/jacoco").include('*.exec'))
-                    sourceDirectories.from(proj.files('src/main/java'))
-                    classDirectories.from(proj.files("${proj.buildDir}/classes/java/main"))
-                }
+        tasks.named('jacocoTestReport') {
+            reports {
+                xml.required = true
+                html.required = false
             }
         }
     }
@@ -278,7 +268,7 @@ projectsEvaluated {
         cmd = [
             gradle_cmd,
             "--init-script", str(init_script),
-            "classes", "testClasses", "test", "jacocoXmlReport",
+            "test", "jacocoTestReport",
             "--continue", "--no-configuration-cache", "--stacktrace",
         ]
         log.info("Running Gradle + JaCoCo: %s", " ".join(cmd))
@@ -296,7 +286,8 @@ projectsEvaluated {
         init_script.unlink(missing_ok=True)
 
     # Search for generated JaCoCo reports (multi-module projects put them in subproject dirs)
-    report_candidates = list(project_path.rglob("jacocoXmlReport/jacocoXmlReport.xml"))
+    # jacocoTestReport puts XML at build/reports/jacoco/test/jacocoTestReport.xml
+    report_candidates = list(project_path.rglob("jacocoTestReport.xml"))
     if not report_candidates:
         # Fallback: look for any JaCoCo XML report
         report_candidates = [p for p in project_path.rglob("jacoco*.xml") if p.stat().st_size > 1000]
