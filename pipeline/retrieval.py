@@ -564,13 +564,19 @@ def _enrich_external_responses(
     """
     extraction_index = _build_extraction_index(all_methods, project_path)
     enriched = 0
+    skipped = 0
 
     for i, response in enumerate(responses):
         for result in response.results:
-            # Raises ValueError on no match or ambiguous match
-            match = _find_matching_method(
-                result.file_path, result.method_id, extraction_index,
-            )
+            try:
+                match = _find_matching_method(
+                    result.file_path, result.method_id, extraction_index,
+                )
+            except ValueError as e:
+                skipped += 1
+                log.warning("Enrichment skipped for result (id=%r, file=%r): %s",
+                            result.method_id, result.file_path, e)
+                continue
             result.class_fqn = result.class_fqn or match.class_fqn
             result.signature = result.signature or match.method_signature
             result.method_body = result.method_body or match.method_body
@@ -579,7 +585,7 @@ def _enrich_external_responses(
             result.type_profile = result.type_profile or _build_type_profile(match)
             enriched += 1
 
-    log.info("Enrichment complete: %d results matched to extraction data", enriched)
+    log.info("Enrichment complete: %d enriched, %d skipped", enriched, skipped)
 
 
 # ---------------------------------------------------------------------------
