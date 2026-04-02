@@ -121,7 +121,11 @@ def run_test_evaluation(
         elif build_system == "maven":
             cmd = ["mvn", "test", "-f", str(project_path / "pom.xml"), "-q"]
         elif build_system == "gradle":
-            gradlew = project_path / "gradlew"
+            import platform
+            if platform.system() == "Windows":
+                gradlew = project_path / "gradlew.bat"
+            else:
+                gradlew = project_path / "gradlew"
             gradle_cmd = str(gradlew) if gradlew.exists() else "gradle"
             cmd = [gradle_cmd, "test", "-q", "--no-daemon"]
         else:

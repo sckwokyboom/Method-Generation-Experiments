@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 import re
 import subprocess
 import xml.etree.ElementTree as ET
@@ -254,8 +255,12 @@ allprojects {
 """)
 
     try:
+        if platform.system() == "Windows":
+            wrapper = project_path / "gradlew.bat"
+        else:
+            wrapper = project_path / "gradlew"
         cmd = [
-            str(project_path / "gradlew") if (project_path / "gradlew").exists() else "gradle",
+            str(wrapper) if wrapper.exists() else "gradle",
             "--init-script", str(init_script),
             "test", "jacocoXmlReport",
             "-q",
