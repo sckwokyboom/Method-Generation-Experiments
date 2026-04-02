@@ -143,7 +143,7 @@ def search_batch(
         raise ValueError("Retrieval config is required for searching")
 
     if retrieval.retriever_type == "external":
-        return _search_batch_external(requests, config, classpath or [], all_methods)
+        return _search_batch_external(requests, config, classpath or [])
     return _search_batch_lucene(requests, config)
 
 
@@ -203,7 +203,6 @@ def _search_batch_external(
     requests: list[dict],
     config: Config,
     classpath: list[str],
-    all_methods: list[ExtractedMethod] | None = None,
 ) -> list[RetrievalResponse]:
     retrieval = config.retrieval
 
@@ -263,14 +262,8 @@ def _search_batch_external(
         responses = [RetrievalResponse.from_dict(r) for r in raw_responses]
         log.info("External batch search complete: %d responses", len(responses))
 
-        # Enrich minimal external results with data from extraction
-        if all_methods:
-            _enrich_external_responses(responses, requests, all_methods, config.project.path)
-        else:
-            log.warning(
-                "No extraction data for external enrichment; "
-                "augmentation and retrieval metrics will be degraded"
-            )
+        # External retriever provides complete content for augmentation;
+        # enrichment is not needed and would overwrite retriever output.
 
         return responses
     finally:
@@ -740,17 +733,18 @@ def format_retrieval_augmentation(
         if result.score < score_threshold:
             break
 
-        # Canonical body source: content field first, method_body as fallback
-        body_source = result.content or result.method_body
-
-        # If content is set but no structured fields (external retriever
-        # providing a complete pre-formatted fragment) — use as-is
-        if body_source and not result.signature:
+        # If content is set, the retriever provided a complete pre-formatted
+        # fragment (e.g. external retriever with invocations, class signatures,
+        # etc.) — use as-is, regardless of whether enrichment filled signature.
+        if result.content:
             file_path = result.file_path or "unknown"
             parts.append(f"{FILE_SEP}{file_path}")
-            parts.append(body_source)
+            parts.append(result.content)
             included += 1
             continue
+
+        # Fallback: build structured fragment from enriched fields
+        body_source = result.method_body
 
         # Convert class FQN to file path: com.example.Foo -> com/example/Foo.java
         file_path = result.file_path or (result.class_fqn.replace(".", "/") + ".java")
