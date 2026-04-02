@@ -235,21 +235,23 @@ def run_jacoco_gradle(
     init_script = project_path / "jacoco-init.gradle"
     init_script.write_text("""\
 allprojects {
-    apply plugin: 'jacoco'
-    tasks.withType(Test) {
-        jacoco {
-            enabled = true
+    plugins.withType(JavaPlugin) {
+        apply plugin: 'jacoco'
+        tasks.withType(Test) {
+            jacoco {
+                enabled = true
+            }
         }
-    }
-    tasks.register('jacocoXmlReport', JacocoReport) {
-        dependsOn tasks.withType(Test)
-        reports {
-            xml.required = true
-            html.required = false
+        tasks.register('jacocoXmlReport', JacocoReport) {
+            dependsOn tasks.withType(Test)
+            reports {
+                xml.required = true
+                html.required = false
+            }
+            executionData.from(fileTree(layout.buildDirectory.get().asFile).include('jacoco/*.exec'))
+            sourceDirectories.from(files('src/main/java'))
+            classDirectories.from(files(layout.buildDirectory.dir('classes/java/main').get().asFile))
         }
-        executionData.from(fileTree(buildDir).include('jacoco/*.exec'))
-        sourceDirectories.from(files('src/main/java'))
-        classDirectories.from(files('build/classes/java/main'))
     }
 }
 """)
@@ -272,8 +274,8 @@ allprojects {
         cmd = [
             gradle_cmd,
             "--init-script", str(init_script),
-            "test", "jacocoXmlReport",
-            "-q",
+            "classes", "testClasses", "test", "jacocoXmlReport",
+            "--continue", "-q",
         ]
         log.info("Running Gradle + JaCoCo: %s", " ".join(cmd))
         result = subprocess.run(
@@ -281,15 +283,32 @@ allprojects {
             timeout=timeout_seconds, cwd=str(project_path),
         )
         if result.returncode != 0:
-            log.error("Gradle + JaCoCo failed:\n%s", result.stderr[-2000:])
-            raise RuntimeError(f"Gradle + JaCoCo failed with exit code {result.returncode}")
+            log.warning("Gradle exited with code %d (some tests may have failed)", result.returncode)
+            if result.stderr:
+                log.debug("Gradle stderr:\n%s", result.stderr[-2000:])
     finally:
         init_script.unlink(missing_ok=True)
 
-    report_path = project_path / "build" / "reports" / "jacoco" / "jacocoXmlReport" / "jacocoXmlReport.xml"
-    if not report_path.exists():
-        raise FileNotFoundError(f"JaCoCo report not found at {report_path}")
+    # Search for generated JaCoCo reports (multi-module projects put them in subproject dirs)
+    report_candidates = list(project_path.rglob("jacocoXmlReport/jacocoXmlReport.xml"))
+    if not report_candidates:
+        # Fallback: look for any JaCoCo XML report
+        report_candidates = [p for p in project_path.rglob("jacoco*.xml") if p.stat().st_size > 1000]
+    if not report_candidates:
+        raise FileNotFoundError(
+            f"No JaCoCo report found under {project_path}. "
+            "Check that the project compiles and has tests."
+        )
+    report_path = max(report_candidates, key=lambda p: p.stat().st_size)
+    log.info("Using JaCoCo report: %s", report_path)
     return report_path
+
+
+def _find_jacoco_reports(project_path: Path) -> list[Path]:
+    """Search for existing JaCoCo XML reports in standard locations."""
+    candidates = list(project_path.rglob("jacoco*.xml"))
+    # Filter to actual JaCoCo reports (not config files)
+    return [p for p in candidates if p.stat().st_size > 1000]
 
 
 def build_coverage_map(
@@ -302,6 +321,13 @@ def build_coverage_map(
     if cached_report and Path(cached_report).exists():
         log.info("Using cached JaCoCo report: %s", cached_report)
         return parse_jacoco_xml(cached_report)
+
+    # Check for existing reports before running tests
+    existing = _find_jacoco_reports(Path(project_path))
+    if existing:
+        log.info("Found %d existing JaCoCo report(s), using largest: %s", len(existing), existing)
+        largest = max(existing, key=lambda p: p.stat().st_size)
+        return parse_jacoco_xml(largest)
 
     if build_system == "maven":
         report = run_jacoco_maven(project_path, timeout_seconds)
