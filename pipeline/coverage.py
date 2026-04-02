@@ -235,22 +235,26 @@ def run_jacoco_gradle(
     init_script = project_path / "jacoco-init.gradle"
     init_script.write_text("""\
 allprojects {
-    plugins.withType(JavaPlugin) {
-        apply plugin: 'jacoco'
-        tasks.withType(Test) {
-            jacoco {
-                enabled = true
-            }
+    afterEvaluate {
+        if (plugins.hasPlugin('java') && !plugins.hasPlugin('jacoco')) {
+            apply plugin: 'jacoco'
         }
-        tasks.register('jacocoXmlReport', JacocoReport) {
-            dependsOn tasks.named('test')
-            reports {
-                xml.required = true
-                html.required = false
+        if (plugins.hasPlugin('jacoco')) {
+            tasks.withType(Test) {
+                jacoco { enabled = true }
             }
-            executionData.from(fileTree(layout.buildDirectory.get().asFile).include('jacoco/*.exec'))
-            sourceDirectories.from(files('src/main/java'))
-            classDirectories.from(files(layout.buildDirectory.dir('classes/java/main').get().asFile))
+            if (!tasks.names.contains('jacocoXmlReport')) {
+                tasks.register('jacocoXmlReport', JacocoReport) {
+                    dependsOn tasks.named('test')
+                    reports {
+                        xml.required = true
+                        html.required = false
+                    }
+                    executionData.from(fileTree("${buildDir}/jacoco").include('*.exec'))
+                    sourceDirectories.from(files('src/main/java'))
+                    classDirectories.from(files("${buildDir}/classes/java/main"))
+                }
+            }
         }
     }
 }
@@ -275,7 +279,7 @@ allprojects {
             gradle_cmd,
             "--init-script", str(init_script),
             "classes", "testClasses", "test", "jacocoXmlReport",
-            "--continue", "--stacktrace",
+            "--continue", "--no-configuration-cache", "--stacktrace",
         ]
         log.info("Running Gradle + JaCoCo: %s", " ".join(cmd))
         result = subprocess.run(
