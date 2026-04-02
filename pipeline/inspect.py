@@ -17,7 +17,7 @@ from pipeline.config import Config
 from pipeline.dataset import build_dataset, load_extraction
 from pipeline.models import ExtractedMethod, RetrievalResponse
 from pipeline.prompt import build_fim_prompt, is_retrieval_mode
-from pipeline.retrieval import build_index, build_search_request, search_batch, format_retrieval_augmentation
+from pipeline.retrieval import build_index, build_search_request, filter_leakage, format_retrieval_augmentation, search_batch
 
 logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger(__name__)
@@ -118,7 +118,8 @@ def print_sample(
 
         retrieval_aug = None
         if is_retrieval_mode(mode) and retrieval_response and retrieval_config:
-            retrieval_aug = format_retrieval_augmentation(retrieval_response, retrieval_config)
+            filtered_response = filter_leakage(retrieval_response, method)
+            retrieval_aug = format_retrieval_augmentation(filtered_response, retrieval_config)
 
         fim = build_fim_prompt(method, mode, shuffle_seed, retrieval_aug)
 

@@ -23,7 +23,7 @@ from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult,
 from pipeline.normalize import normalize_code
 from pipeline.prompt import build_fim_prompt, is_retrieval_mode, retriever_name_from_mode
 from pipeline.report import generate_report, load_sample_result, update_progress, write_sample_result
-from pipeline.retrieval import build_index, build_search_request, format_retrieval_augmentation, search_batch
+from pipeline.retrieval import build_index, build_search_request, filter_leakage, format_retrieval_augmentation, search_batch
 from pipeline.tokenizer import count_tokens
 
 logging.basicConfig(
@@ -111,7 +111,7 @@ def process_sample(
     ret_cfg = _retrieval_config_for_mode(config, mode)
     _is_ret = is_retrieval_mode(mode)  # includes legacy "retrieval_augmentation"
     if _is_ret and retrieval_response and ret_cfg:
-        effective_retrieval = retrieval_response
+        effective_retrieval = filter_leakage(retrieval_response, method)
         retrieval_aug = format_retrieval_augmentation(effective_retrieval, ret_cfg)
 
     fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)

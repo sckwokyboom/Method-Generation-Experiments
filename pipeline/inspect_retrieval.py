@@ -27,6 +27,7 @@ from pipeline.prompt import build_fim_prompt
 from pipeline.retrieval import (
     build_index,
     build_search_request,
+    filter_leakage,
     format_retrieval_augmentation,
     search_batch,
 )
@@ -207,6 +208,7 @@ def main():
     log.info("Building inspection data...")
     samples = []
     for i, (method, req, resp) in enumerate(zip(methods, requests, responses)):
+        resp = filter_leakage(resp, method)
         aug = format_retrieval_augmentation(resp, ret_cfg)
         fim_ret = build_fim_prompt(method, ret_mode, config.experiment.shuffle_seed, aug)
         fim_no = build_fim_prompt(method, "no_augmentation", config.experiment.shuffle_seed)

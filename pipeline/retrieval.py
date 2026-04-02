@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pipeline.config import Config, RetrievalConfig
 from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult
@@ -644,6 +644,57 @@ def _extract_body_lines(method_body: str, max_lines: int) -> list[str] | None:
         lines.append("    // ...")
 
     return lines
+
+
+def filter_leakage(
+    response: RetrievalResponse,
+    target: ExtractedMethod,
+) -> RetrievalResponse:
+    """Remove retrieval results that come from the target file (leakage).
+
+    Compares by file_path (with suffix matching for absolute/relative mismatch),
+    class_fqn, and method_body.  Any single match is enough to exclude.
+    Returns a new RetrievalResponse with leaked results removed.
+    """
+    def _paths_match(a: str, b: str) -> bool:
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        # Suffix matching: handles absolute vs relative path mismatch
+        pa, pb = PurePosixPath(a.replace("\\", "/")), PurePosixPath(b.replace("\\", "/"))
+        return _is_suffix(pa, pb) or _is_suffix(pb, pa)
+
+    def _is_suffix(longer: PurePosixPath, shorter: PurePosixPath) -> bool:
+        lp, sp = longer.parts, shorter.parts
+        return len(lp) >= len(sp) and lp[-len(sp):] == sp
+
+    filtered = []
+    removed = 0
+    for r in response.results:
+        is_leak = _paths_match(r.file_path, target.file_path)
+        if not is_leak and r.class_fqn and target.class_fqn:
+            is_leak = r.class_fqn == target.class_fqn
+        if is_leak:
+            removed += 1
+            log.info(
+                "Leakage filter (Python): removed result file_path=%r class_fqn=%r "
+                "(target file_path=%r class_fqn=%r)",
+                r.file_path, r.class_fqn, target.file_path, target.class_fqn,
+            )
+            continue
+        filtered.append(r)
+
+    if removed:
+        log.warning("Leakage filter removed %d result(s) from target file %s",
+                     removed, target.file_path)
+
+    return RetrievalResponse(
+        results=filtered,
+        total_hits=response.total_hits,
+        search_time_ms=response.search_time_ms,
+        query_debug=response.query_debug,
+    )
 
 
 FILE_SEP = "<|file_sep|>"
