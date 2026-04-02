@@ -12,6 +12,9 @@ class ProjectConfig:
     path: str
     tag: str
     fallback_tag: str = ""
+    build_system: str = "gradle"
+    repo: str = ""
+    test_command: str = ""
 
 
 @dataclass
@@ -20,6 +23,9 @@ class ExtractionConfig:
     min_statements: int
     exclude_categories: list[str]
     output: str
+    require_non_void: bool = False
+    require_parameters: bool = False
+    require_test_coverage: bool = False
 
 
 @dataclass
@@ -79,6 +85,12 @@ class CompilabilityConfig:
 
 
 @dataclass
+class TestEvaluationConfig:
+    enabled: bool = False
+    timeout_seconds: int = 300
+    build_system: str = "maven"
+
+@dataclass
 class OutputConfig:
     dir: str
     save_prompts: bool
@@ -96,6 +108,7 @@ class Config:
     output: OutputConfig
     retrieval: RetrievalConfig | None = None
     retrievers: dict[str, RetrievalConfig] = field(default_factory=dict)
+    test_evaluation: TestEvaluationConfig = field(default_factory=TestEvaluationConfig)
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
@@ -114,6 +127,10 @@ class Config:
             if "default" not in retrievers:
                 retrievers["default"] = retrieval
 
+        test_eval = TestEvaluationConfig()
+        if "test_evaluation" in raw:
+            test_eval = TestEvaluationConfig(**raw["test_evaluation"])
+
         return cls(
             project=ProjectConfig(**raw["project"]),
             extraction=ExtractionConfig(**raw["extraction"]),
@@ -124,6 +141,7 @@ class Config:
             output=OutputConfig(**raw["output"]),
             retrieval=retrieval,
             retrievers=retrievers,
+            test_evaluation=test_eval,
         )
 
     def to_dict(self) -> dict:

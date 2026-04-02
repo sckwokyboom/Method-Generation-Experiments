@@ -6,6 +6,7 @@ import random
 from pathlib import Path
 
 from pipeline.config import Config
+from pipeline.coverage import CoverageMap
 from pipeline.models import ExtractionData, ExtractedMethod
 
 log = logging.getLogger(__name__)
@@ -21,19 +22,45 @@ def filter_methods(
     methods: list[ExtractedMethod],
     exclude_categories: list[str],
     min_statements: int,
+    require_non_void: bool = False,
+    require_parameters: bool = False,
+    require_test_coverage: bool = False,
+    coverage_map: CoverageMap | None = None,
 ) -> list[ExtractedMethod]:
     filtered = []
+    stats = {"category": 0, "statements": 0, "invocations": 0, "unresolved": 0,
+             "void": 0, "no_params": 0, "no_coverage": 0}
     for m in methods:
         if m.category in exclude_categories:
+            stats["category"] += 1
             continue
         if m.statement_count < min_statements:
+            stats["statements"] += 1
             continue
         if not m.invocations:
+            stats["invocations"] += 1
             continue
         if any(inv.resolution_mode != "EXACT" for inv in m.invocations):
+            stats["unresolved"] += 1
             continue
+        if require_non_void and (m.return_type is None or m.return_type == "void"):
+            stats["void"] += 1
+            continue
+        if require_parameters and not m.parameter_types:
+            stats["no_params"] += 1
+            continue
+        if require_test_coverage:
+            if coverage_map is None:
+                raise ValueError("require_test_coverage is set but no coverage_map provided")
+            if not coverage_map.is_method_covered(m.class_fqn, m.method_name, m.parameter_types):
+                stats["no_coverage"] += 1
+                continue
         filtered.append(m)
-    log.info("Filtered %d -> %d methods (fully resolved invocations only)", len(methods), len(filtered))
+    log.info(
+        "Filtered %d -> %d methods. Rejected: %s",
+        len(methods), len(filtered),
+        ", ".join(f"{k}={v}" for k, v in stats.items() if v > 0),
+    )
     return filtered
 
 
@@ -54,12 +81,19 @@ def sample_dataset(
     return sampled
 
 
-def build_dataset(config: Config) -> tuple[list[ExtractedMethod], list[str]]:
+def build_dataset(
+    config: Config,
+    coverage_map: CoverageMap | None = None,
+) -> tuple[list[ExtractedMethod], list[str]]:
     extraction = load_extraction(config.extraction.output)
     methods = filter_methods(
         extraction.methods,
         config.extraction.exclude_categories,
         config.extraction.min_statements,
+        require_non_void=config.extraction.require_non_void,
+        require_parameters=config.extraction.require_parameters,
+        require_test_coverage=config.extraction.require_test_coverage,
+        coverage_map=coverage_map,
     )
     sampled = sample_dataset(methods, config.dataset.sample_count, config.dataset.random_seed)
 

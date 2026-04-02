@@ -13,17 +13,19 @@ from pathlib import Path
 
 from pipeline.compilability import check_compilability
 from pipeline.config import Config
+from pipeline.coverage import build_coverage_map
 from pipeline.dataset import build_dataset, load_extraction
 from pipeline.llm import generate_completion
 from pipeline.metrics import (
     compute_all_metrics, invocation_recall_at_k, api_coverage_at_k, mrr_for_similar_method,
     retrieval_precision_at_k, retrieval_ndcg_at_k, retrieval_type_iou, owner_type_recall,
 )
-from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult, SampleResult
+from pipeline.models import ExtractedMethod, RetrievalResponse, RetrievalResult, SampleResult, TestEvalResult
 from pipeline.normalize import normalize_code
 from pipeline.prompt import build_fim_prompt, is_retrieval_mode, retriever_name_from_mode
 from pipeline.report import generate_report, load_sample_result, update_progress, write_sample_result
 from pipeline.retrieval import build_index, build_search_request, filter_leakage, format_retrieval_augmentation, search_batch
+from pipeline.test_runner import run_test_evaluation
 from pipeline.tokenizer import count_tokens
 
 logging.basicConfig(
@@ -423,7 +425,19 @@ def run_experiment(config: Config) -> None:
 
     run_extraction(config)
 
-    methods, classpath = build_dataset(config)
+    # Build coverage map if test-coverage filtering is enabled
+    coverage_map = None
+    if config.extraction.require_test_coverage:
+        log.info("=== Building coverage map via JaCoCo ===")
+        jacoco_report = Path(config.project.path) / "target" / "site" / "jacoco" / "jacoco.xml"
+        coverage_map = build_coverage_map(
+            config.project.path,
+            build_system=config.project.build_system,
+            cached_report=str(jacoco_report) if jacoco_report.exists() else None,
+        )
+        log.info("Coverage map: %s", coverage_map)
+
+    methods, classpath = build_dataset(config, coverage_map=coverage_map)
     log.info("Dataset: %d methods, %d classpath entries", len(methods), len(classpath))
 
     # Build retrieval indexes and batch-search for each retrieval mode
@@ -481,6 +495,60 @@ def run_experiment(config: Config) -> None:
 
         all_results[mode] = mode_results
         log.info("Mode %s: %d/%d samples completed", mode, len(mode_results), len(methods))
+
+    # === Test Evaluation Phase (sequential, modifies source files) ===
+    if config.test_evaluation.enabled:
+        log.info("=== Running test evaluation for pass@k ===")
+        project_path = Path(config.project.path)
+        for mode, mode_results in all_results.items():
+            log.info("Test evaluation for mode: %s (%d samples)", mode, len(mode_results))
+            samples_dir = output_dir / mode / "samples"
+            for i, result in enumerate(mode_results):
+                if result.test_eval is not None:
+                    log.info("[%s] Sample %d/%d already has test_eval, skipping",
+                             mode, i + 1, len(mode_results))
+                    continue
+
+                # Find the corresponding method for source restoration
+                method = next(
+                    (m for m in methods
+                     if f"{m.class_fqn}#{m.method_name}" == result.method_id),
+                    None,
+                )
+                if method is None:
+                    log.warning("Could not find method for %s, skipping test eval", result.method_id)
+                    continue
+
+                log.info("[%s] Test eval %d/%d: %s", mode, i + 1, len(mode_results), result.method_id)
+                test_result = run_test_evaluation(
+                    method, result.generated, project_path,
+                    build_system=config.test_evaluation.build_system,
+                    timeout_seconds=config.test_evaluation.timeout_seconds,
+                    test_command=config.project.test_command or None,
+                )
+                result.test_eval = TestEvalResult(
+                    success=test_result.success,
+                    tests_run=test_result.tests_run,
+                    tests_passed=test_result.tests_passed,
+                    tests_failed=test_result.tests_failed,
+                    failed_test_names=test_result.failed_test_names,
+                    build_success=test_result.build_success,
+                    error_messages=test_result.error_messages,
+                    duration_ms=test_result.duration_ms,
+                )
+                # Re-save the sample with test_eval data
+                sample_path = samples_dir / f"sample_{i:03d}.json"
+                write_sample_result(
+                    result, sample_path,
+                    save_prompts=config.output.save_prompts,
+                    save_responses=config.output.save_responses,
+                )
+                log.info(
+                    "[%s] Test eval %d/%d: %s (tests=%d, passed=%d, failed=%d)",
+                    mode, i + 1, len(mode_results),
+                    "PASS" if test_result.success else "FAIL",
+                    test_result.tests_run, test_result.tests_passed, test_result.tests_failed,
+                )
 
     config_summary = {
         "model_name": config.llm.model_name,

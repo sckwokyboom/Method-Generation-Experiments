@@ -232,6 +232,18 @@ class CompilabilityResult:
 
 
 @dataclass
+class TestEvalResult:
+    success: bool
+    tests_run: int
+    tests_passed: int
+    tests_failed: int
+    failed_test_names: list[str]
+    build_success: bool
+    error_messages: list[str]
+    duration_ms: float
+
+
+@dataclass
 class SampleResult:
     method_id: str
     file_path: str
@@ -250,6 +262,7 @@ class SampleResult:
     llm_response: dict
     retrieval_results: list[dict] | None = None
     retrieval_query: str | None = None
+    test_eval: TestEvalResult | None = None
 
     def to_dict(self) -> dict:
         d = {
@@ -291,6 +304,17 @@ class SampleResult:
             d["retrieval_results"] = self.retrieval_results
         if self.retrieval_query is not None:
             d["retrieval_query"] = self.retrieval_query
+        if self.test_eval is not None:
+            d["test_eval"] = {
+                "success": self.test_eval.success,
+                "tests_run": self.test_eval.tests_run,
+                "tests_passed": self.test_eval.tests_passed,
+                "tests_failed": self.test_eval.tests_failed,
+                "failed_test_names": self.test_eval.failed_test_names,
+                "build_success": self.test_eval.build_success,
+                "error_messages": self.test_eval.error_messages,
+                "duration_ms": self.test_eval.duration_ms,
+            }
         return d
 
     @classmethod
@@ -320,6 +344,20 @@ class SampleResult:
                 error_messages=metrics_d.get("compile_errors", []),
                 exit_code=metrics_d.get("compile_exit_code", 0),
             )
+        test_eval = None
+        if d.get("test_eval"):
+            te = d["test_eval"]
+            test_eval = TestEvalResult(
+                success=te["success"],
+                tests_run=te["tests_run"],
+                tests_passed=te["tests_passed"],
+                tests_failed=te["tests_failed"],
+                failed_test_names=te.get("failed_test_names", []),
+                build_success=te.get("build_success", True),
+                error_messages=te.get("error_messages", []),
+                duration_ms=te.get("duration_ms", 0.0),
+            )
+
         return cls(
             method_id=d["method_id"],
             file_path=d["file_path"],
@@ -338,4 +376,5 @@ class SampleResult:
             llm_response=d.get("llm_response", {}),
             retrieval_results=d.get("retrieval_results"),
             retrieval_query=d.get("retrieval_query"),
+            test_eval=test_eval,
         )

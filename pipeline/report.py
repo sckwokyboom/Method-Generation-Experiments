@@ -81,6 +81,9 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
     compilable = [s for s in samples if s.compilability is not None]
     comp_values = [1 if s.compilability.success else 0 for s in compilable]
 
+    test_eval_samples = [s for s in samples if s.test_eval is not None]
+    test_pass_values = [1 if s.test_eval.success else 0 for s in test_eval_samples]
+
     recall_values = [s.metrics.recall_at_k for s in samples if s.metrics.recall_at_k is not None]
     api_cov_values = [s.metrics.api_coverage_at_k for s in samples if s.metrics.api_coverage_at_k is not None]
     mrr_values = [s.metrics.mrr for s in samples if s.metrics.mrr is not None]
@@ -109,6 +112,7 @@ def aggregate_metrics(samples: list[SampleResult]) -> dict:
         "lcs_no_ident_ratio": stats(lcs_no_ident_ratio_values) if lcs_no_ident_ratio_values else None,
         "codebleu": stats(codebleu_values) if codebleu_values else None,
         "compilable": stats(comp_values) if comp_values else None,
+        "test_pass": stats(test_pass_values) if test_pass_values else None,
         "recall_at_k": stats(recall_values) if recall_values else None,
         "api_coverage_at_k": stats(api_cov_values) if api_cov_values else None,
         "mrr": stats(mrr_values) if mrr_values else None,
@@ -126,7 +130,7 @@ def generate_comparison_table(all_results: dict[str, list[SampleResult]]) -> str
     rows = []
 
     for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu",
-                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr",
+                        "compilable", "test_pass", "recall_at_k", "api_coverage_at_k", "mrr",
                         "retrieval_precision_at_k", "retrieval_ndcg_at_k",
                         "retrieval_type_iou", "owner_type_recall"]:
         row = [metric_name]
@@ -238,6 +242,17 @@ def _format_sample_markdown(i: int, sample: SampleResult) -> str:
             lines.append(err)
             lines.append(f"```")
 
+    if sample.test_eval is not None:
+        lines.append("")
+        te = sample.test_eval
+        status = "PASS" if te.success else "FAIL"
+        lines.append(f"**Test evaluation**: {status} (run={te.tests_run}, passed={te.tests_passed}, failed={te.tests_failed})")
+        if te.failed_test_names:
+            lines.append("")
+            lines.append("**Failed tests**:")
+            for name in te.failed_test_names[:5]:
+                lines.append(f"- `{name}`")
+
     lines.append("")
     lines.append(f"*Full prompt: see `{sample.mode}/samples/sample_{i:03d}.json`*")
     lines.append("")
@@ -292,7 +307,7 @@ def generate_markdown_report(
     headers = ["Metric"] + modes
     lines.append("| " + " | ".join(headers) + " |")
     lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable"]:
+    for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu", "compilable", "test_pass"]:
         row = [metric_name]
         for mode in modes:
             agg = aggregates[mode].get(metric_name)
@@ -307,7 +322,7 @@ def generate_markdown_report(
     lines.append("### Key Findings")
     lines.append("")
     for metric_name in ["em", "es", "iou", "lcs_ratio", "lcs_no_ident_ratio", "codebleu",
-                        "compilable", "recall_at_k", "api_coverage_at_k", "mrr",
+                        "compilable", "test_pass", "recall_at_k", "api_coverage_at_k", "mrr",
                         "retrieval_precision_at_k", "retrieval_ndcg_at_k",
                         "retrieval_type_iou", "owner_type_recall"]:
         best_mode = None
@@ -334,7 +349,7 @@ def generate_markdown_report(
         lines.append("| Metric | Mean | Median | Std |")
         lines.append("|--------|------|--------|-----|")
         for metric_name in ["em", "es", "iou", "lcs_length", "lcs_ratio", "lcs_no_ident_length",
-                            "lcs_no_ident_ratio", "codebleu", "compilable",
+                            "lcs_no_ident_ratio", "codebleu", "compilable", "test_pass",
                             "recall_at_k", "api_coverage_at_k", "mrr",
                             "retrieval_precision_at_k", "retrieval_ndcg_at_k",
                             "retrieval_type_iou", "owner_type_recall"]:

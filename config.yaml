@@ -1,8 +1,9 @@
 project:
-  name: "rustyconnector-minecraft"
-  path: "./target-project/rustyconnector-minecraft/plugin"
-  tag: "v0.8.2"
-  fallback_tag: "v0.9.1"
+  name: "commons-lang"
+  path: "./target-project/commons-lang"
+  tag: "rel/commons-lang-3.14.0"
+  build_system: "maven"
+  repo: "https://github.com/apache/commons-lang.git"
 
 extraction:
   extractor_jar: "./extractor/extractor-core/build/libs/method-extractor-0.2.0.jar"
@@ -14,6 +15,9 @@ extraction:
     - GENERATED
     - TEST
   output: "./results/extracted_methods.json"
+  require_non_void: true
+  require_parameters: true
+  require_test_coverage: true
 
 dataset:
   sample_count: 100
@@ -56,8 +60,13 @@ experiment:
 compilability:
   enabled: true
   mode: "file"  # file | project
-  source_version: "17"
+  source_version: "8"
   # java_home: "/path/to/jdk-17"  # optional, uses system javac if not set
+
+test_evaluation:
+  enabled: true
+  timeout_seconds: 300
+  build_system: "maven"
 
 output:
   dir: "./results"
