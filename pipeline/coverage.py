@@ -243,7 +243,7 @@ allprojects {
             }
         }
         tasks.register('jacocoXmlReport', JacocoReport) {
-            dependsOn tasks.withType(Test)
+            dependsOn tasks.named('test')
             reports {
                 xml.required = true
                 html.required = false
