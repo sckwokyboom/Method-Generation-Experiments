@@ -26,6 +26,7 @@ class ExtractionConfig:
     require_non_void: bool = False
     require_parameters: bool = False
     require_test_coverage: bool = False
+    min_coverage_ratio: float = 0.0
 
 
 @dataclass

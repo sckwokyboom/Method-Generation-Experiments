@@ -26,10 +26,11 @@ def filter_methods(
     require_parameters: bool = False,
     require_test_coverage: bool = False,
     coverage_map: CoverageMap | None = None,
+    min_coverage_ratio: float = 0.0,
 ) -> list[ExtractedMethod]:
     filtered = []
     stats = {"category": 0, "statements": 0, "invocations": 0, "unresolved": 0,
-             "void": 0, "no_params": 0, "no_coverage": 0}
+             "void": 0, "no_params": 0, "no_coverage": 0, "low_coverage": 0}
     for m in methods:
         if m.category in exclude_categories:
             stats["category"] += 1
@@ -55,6 +56,11 @@ def filter_methods(
             if not coverage_map.is_method_covered(m.class_fqn, m.method_name, m.parameter_types):
                 stats["no_coverage"] += 1
                 continue
+            if min_coverage_ratio > 0:
+                ratio = coverage_map.get_method_coverage_ratio(m.class_fqn, m.method_name, m.parameter_types)
+                if ratio is None or ratio < min_coverage_ratio:
+                    stats["low_coverage"] += 1
+                    continue
         filtered.append(m)
     log.info(
         "Filtered %d -> %d methods. Rejected: %s",
@@ -94,6 +100,7 @@ def build_dataset(
         require_parameters=config.extraction.require_parameters,
         require_test_coverage=config.extraction.require_test_coverage,
         coverage_map=coverage_map,
+        min_coverage_ratio=config.extraction.min_coverage_ratio,
     )
     sampled = sample_dataset(methods, config.dataset.sample_count, config.dataset.random_seed)
 
@@ -104,6 +111,7 @@ def build_dataset(
             {
                 "sample_count": len(sampled),
                 "seed": config.dataset.random_seed,
+                "min_coverage_ratio": config.extraction.min_coverage_ratio,
                 "methods": [
                     {
                         "file_path": m.file_path,
@@ -111,6 +119,9 @@ def build_dataset(
                         "method_name": m.method_name,
                         "statement_count": m.statement_count,
                         "invocation_count": len(m.invocations),
+                        **({"coverage_ratio": coverage_map.get_method_coverage_ratio(
+                            m.class_fqn, m.method_name, m.parameter_types
+                        )} if coverage_map else {}),
                     }
                     for m in sampled
                 ],

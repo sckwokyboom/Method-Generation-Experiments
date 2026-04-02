@@ -77,6 +77,11 @@ class MethodCoverage:
     def is_covered(self) -> bool:
         return self.lines_covered > 0
 
+    @property
+    def coverage_ratio(self) -> float:
+        total = self.lines_covered + self.lines_missed
+        return self.lines_covered / total if total > 0 else 0.0
+
 
 @dataclass
 class CoverageMap:
@@ -108,6 +113,23 @@ class CoverageMap:
                     continue
             return True
         return False
+
+    def get_method_coverage_ratio(
+        self,
+        class_fqn: str,
+        method_name: str,
+        param_types: list[str] | None = None,
+    ) -> float | None:
+        """Return the line coverage ratio for a method, or None if not found."""
+        methods = self._data.get(class_fqn, [])
+        for mc in methods:
+            if mc.method_name != method_name:
+                continue
+            if param_types is not None:
+                if not _types_match(mc.param_types, param_types):
+                    continue
+            return mc.coverage_ratio
+        return None
 
     def covered_count(self) -> int:
         return sum(

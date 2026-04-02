@@ -1,9 +1,10 @@
 project:
-  name: "commons-lang"
-  path: "./target-project/commons-lang"
-  tag: "rel/commons-lang-3.14.0"
-  build_system: "maven"
-  repo: "https://github.com/apache/commons-lang.git"
+  name: "junit5"
+  path: "./target-project/junit5"
+  tag: "main"
+  build_system: "gradle"
+  repo: "https://github.com/junit-team/junit5.git"
+  test_command: "./gradlew test -x :platform-tooling-support-tests:test --no-daemon"
 
 extraction:
   extractor_jar: "./extractor/extractor-core/build/libs/method-extractor-0.2.0.jar"
@@ -18,6 +19,7 @@ extraction:
   require_non_void: true
   require_parameters: true
   require_test_coverage: true
+  min_coverage_ratio: 0.8
 
 dataset:
   sample_count: 100
@@ -60,13 +62,13 @@ experiment:
 compilability:
   enabled: true
   mode: "file"  # file | project
-  source_version: "8"
+  source_version: "17"
   # java_home: "/path/to/jdk-17"  # optional, uses system javac if not set
 
 test_evaluation:
   enabled: true
   timeout_seconds: 300
-  build_system: "maven"
+  build_system: "gradle"
 
 output:
   dir: "./results"
