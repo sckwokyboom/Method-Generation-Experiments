@@ -17,7 +17,7 @@
 
 ## Требования
 
-- **Java 17** (для сборки и запуска extractor'а и retriever'а)
+- **Java 17+** (для сборки и запуска extractor'а и retriever'а; JDK 25 поддерживается через Gradle 9.4.1)
 - **Python 3.11+**
 - **Git**
 
@@ -440,6 +440,7 @@ results/
 | **IoU** | Jaccard на множестве токенов (multiset intersection / union) |
 | **LCS ratio** | Длина LCS на токенах / `max(len(gen_tokens), len(ref_tokens))` |
 | **Compilable** | Успешная компиляция файла через `javac` после подстановки тела |
+| **Test Pass** | Доля сэмплов, где все тесты прошли после подстановки сгенерированного тела (pass@1) |
 | **Recall@K** | Доля oracle invocations, покрытых retrieved аугментацией (только `retrieval_augmentation`) |
 | **API Coverage@K** | Доля нужных API (owner+method), найденных ретривером (только `retrieval_augmentation`) |
 | **MRR** | Mean Reciprocal Rank похожего метода в retrieved результатах (только `retrieval_augmentation`) |
@@ -483,13 +484,104 @@ pipeline/                               # Python пайплайн
   normalize.py         # Нормализация кода + identifier unification
   metrics.py           # EM, ES, IoU, LCS, CodeBLEU + Recall@K, API Coverage, MRR
   compilability.py     # javac subprocess check
-  report.py            # Агрегация + таблицы (вкл. retrieval метрики)
-  run.py               # Главный оркестратор
+  coverage.py          # JaCoCo интеграция: запуск, парсинг XML, CoverageMap
+  test_runner.py       # Замена тела метода → прогон тестов → pass@k
+  report.py            # Агрегация + таблицы (вкл. retrieval и test_pass метрики)
+  run.py               # Главный оркестратор (вкл. coverage map + test evaluation фаза)
   inspect.py           # Dry-run инспекция сэмплов (вкл. retrieval_augmentation)
   inspect_retrieval.py # HTML-инспектор retrieval (Lucene explain, overlap analysis)
   viewer.py            # HTML-вьювер для oracle экспериментов
   retrieval_viewer.py  # HTML-вьювер для retrieval экспериментов
 ```
+
+---
+
+## Фильтрация сэмплов для оценки (functional-style + test coverage)
+
+Pipeline поддерживает расширенную фильтрацию методов для оценки method generation через pass@k. Цель — отобрать методы с "богатой функциональной сигнатурой", покрытые тестами.
+
+### Критерии фильтрации
+
+| Критерий | Параметр конфига | Описание |
+|----------|-----------------|----------|
+| Non-void return type | `extraction.require_non_void: true` | Исключает `void`-методы и конструкторы — оставляет методы, отражающие data flow через сигнатуру |
+| Наличие параметров | `extraction.require_parameters: true` | Данные должны поступать через параметры, а не через side effects |
+| Покрытие тестами | `extraction.require_test_coverage: true` | Метод должен быть покрыт хотя бы одним тестом (через JaCoCo) |
+| ≥3 statement | `extraction.min_statements: 3` | Нетривиальное тело метода |
+| Resolved invocations | (всегда) | Все invocations должны иметь EXACT resolution |
+| Не getter/setter/... | `extraction.exclude_categories` | Исключаются GETTER, SETTER, DELEGATOR, GENERATED, TEST |
+
+### JaCoCo интеграция (`pipeline/coverage.py`)
+
+Для определения покрытия тестами используется JaCoCo:
+
+1. Запускаются тесты с JaCoCo agent (Maven: `jacoco:prepare-agent test jacoco:report`, Gradle: init script или встроенный плагин)
+2. Парсится XML-отчёт — строится `CoverageMap`: `{class_fqn → [MethodCoverage]}`
+3. Для матчинга JVM-дескрипторов (из JaCoCo) с FQN-типами (из экстрактора) используется встроенный конвертер
+
+Для multi-module Gradle-проектов (например, JUnit 5) можно объединить exec-файлы через JaCoCo CLI:
+
+```bash
+java -jar org.jacoco.cli-nodeps.jar merge */build/jacoco/*.exec --destfile merged.exec
+java -jar org.jacoco.cli-nodeps.jar report merged.exec --classfiles */build/classes/java/main --xml report.xml
+```
+
+### Test runner для pass@k (`pipeline/test_runner.py`)
+
+После генерации тела метода LLM pipeline может оценить корректность через прогон тестов:
+
+1. Тело метода заменяется в исходном файле (offset-based replacement)
+2. Запускается `./gradlew test` или `mvn test`
+3. Парсятся XML-отчёты тестов (Surefire/JUnit format)
+4. Оригинальный файл восстанавливается из `file_content` (+ fallback через `git checkout`)
+
+Конфигурация:
+
+```yaml
+test_evaluation:
+  enabled: true
+  timeout_seconds: 300
+  build_system: "gradle"   # или "maven"
+```
+
+Результат: метрика `test_pass` в агрегированном отчёте (доля сэмплов, где все тесты прошли после подстановки сгенерированного тела).
+
+### Выбор target-проекта
+
+Текущий target-проект: **JUnit 5** (`junit-team/junit5`).
+
+| Параметр | Значение |
+|----------|----------|
+| Билд | Gradle 9.4.1 |
+| Тесты | ~6200, ~49 секунд |
+| Извлечено методов | 1079 |
+| **После всех фильтров** | **368** |
+| JaCoCo coverage | 5414/6905 методов (78%) |
+
+Критерии выбора проекта:
+- **Gradle** (не Maven) — для совместимости с закрытым контуром
+- **Быстрые тесты** (<2 минут) — для практичного pass@k
+- **Много functional-style методов** — utility/library код с non-void return types
+- **Совместимость с JDK 25** — Gradle 9.x
+
+Проверенные и отклонённые проекты:
+
+| Проект | Причина отклонения |
+|--------|-------------------|
+| Apache Commons Lang | Maven (проблемы с прокси в закрытом контуре), 566 методов |
+| Caffeine | Тесты 30+ минут (стресс-тестирование кэша) |
+| PureFun | Слишком мало методов (61 после фильтров) |
+| Picocli | Несовместим с Gradle 9 |
+| Functional Java | Старый Gradle, не собирается на JDK 25 |
+| Vavr | Maven (не Gradle) |
+
+### Безопасность данных
+
+Pipeline полностью локальный — исходники target-проекта **не отправляются** в сеть:
+
+- **LLM endpoint** (`llm.endpoint_url`) — единственный сетевой вызов. По умолчанию `http://localhost:8080` (локальный). Если LLM запущен локально, данные не покидают машину
+- **CDN-ссылки** в HTML-вьюверах — только загрузка JS-библиотек (highlight.js, diff2html) для подсветки синтаксиса в браузере. Исходный код туда не отправляется
+- **Экстрактор, ретривер, метрики, coverage, test runner** — полностью офлайн
 
 ---
 
