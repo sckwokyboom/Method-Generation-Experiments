@@ -275,7 +275,7 @@ allprojects {
             gradle_cmd,
             "--init-script", str(init_script),
             "classes", "testClasses", "test", "jacocoXmlReport",
-            "--continue", "-q",
+            "--continue", "--stacktrace",
         ]
         log.info("Running Gradle + JaCoCo: %s", " ".join(cmd))
         result = subprocess.run(
@@ -283,9 +283,11 @@ allprojects {
             timeout=timeout_seconds, cwd=str(project_path),
         )
         if result.returncode != 0:
-            log.warning("Gradle exited with code %d (some tests may have failed)", result.returncode)
+            log.warning("Gradle exited with code %d", result.returncode)
+            if result.stdout:
+                log.warning("Gradle stdout:\n%s", result.stdout[-3000:])
             if result.stderr:
-                log.debug("Gradle stderr:\n%s", result.stderr[-2000:])
+                log.warning("Gradle stderr:\n%s", result.stderr[-3000:])
     finally:
         init_script.unlink(missing_ok=True)
 
