@@ -460,6 +460,7 @@ body {
 .mode-tag-none { background: var(--mode-none); color: var(--bg); }
 .mode-tag-ordered { background: var(--mode-ordered); color: var(--bg); }
 .mode-tag-shuffled { background: var(--mode-shuffled); color: var(--bg); }
+.mode-tag-rag { background: var(--accent); color: var(--bg); }
 
 .code-grid {
   display: grid;
@@ -672,7 +673,8 @@ body {
       <button class="tab-btn active" data-tab="code">Code <span class="tab-hint">1</span></button>
       <button class="tab-btn" data-tab="diff">Diff <span class="tab-hint">2</span></button>
       <button class="tab-btn" data-tab="prompt">Prompt <span class="tab-hint">3</span></button>
-      <button class="tab-btn" data-tab="meta">Meta <span class="tab-hint">4</span></button>
+      <button class="tab-btn" data-tab="retrieval">Retrieval <span class="tab-hint">4</span></button>
+      <button class="tab-btn" data-tab="meta">Meta <span class="tab-hint">5</span></button>
     </div>
     <div id="tab-content"></div>
   </div>
@@ -703,6 +705,7 @@ const state = {
   filters: { em: false, compilable: false, errors: false },
   diffPair: null,
   diffFormat: 'side-by-side',
+  diffIdentOnly: false,
 };
 
 // --- Helpers ---
@@ -718,8 +721,28 @@ function fullMethod(sample, body) {
   return sig + ' {\n' + b + '\n}';
 }
 
+function stripToIdentifiers(code) {
+  // Remove comments
+  let s = code.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  // Collapse whitespace per line, drop empty
+  s = s.split('\n').map(l => l.split(/\s+/).join(' ').trim()).filter(l => l).join('\n');
+  return s;
+}
+
+// Palette for dynamically-named rag_* modes
+const RAG_PALETTE = ['#89b4fa','#74c7ec','#94e2d5','#f5c2e7','#cba6f7','#f9e2af','#eba0ac'];
+let _ragColorIdx = 0;
+
 function getModeColor(mode) {
-  return MODE_COLORS[mode] || { tag: 'mode-tag-none', color: '#9399b2' };
+  if (MODE_COLORS[mode]) return MODE_COLORS[mode];
+  if (mode.startsWith('rag_') || mode === 'retrieval_augmentation') {
+    // Assign a stable color on first access
+    const color = RAG_PALETTE[_ragColorIdx % RAG_PALETTE.length];
+    _ragColorIdx++;
+    MODE_COLORS[mode] = { tag: 'mode-tag-rag', color };
+    return MODE_COLORS[mode];
+  }
+  return { tag: 'mode-tag-none', color: '#9399b2' };
 }
 
 function getModeLabel(mode) {
@@ -954,6 +977,11 @@ function renderDiffTab() {
     <select id="diff-select">${options}</select>
     <button class="diff-fmt ${fmt === 'side-by-side' ? 'active' : ''}" data-fmt="side-by-side">Side by Side</button>
     <button class="diff-fmt ${fmt === 'line-by-line' ? 'active' : ''}" data-fmt="line-by-line">Unified</button>
+    <label style="margin-left:16px;font-size:12px;cursor:pointer;user-select:none;color:var(--text-dim)">
+      <input type="checkbox" id="diff-ident-only" ${state.diffIdentOnly ? 'checked' : ''}
+        style="margin-right:4px;vertical-align:middle">
+      Identifiers only (strip comments &amp; whitespace)
+    </label>
   </div>`;
   html += '<div id="diff-output"></div>';
   return html;
@@ -965,9 +993,15 @@ function computeDiff() {
   const pair = pairs[state.diffPair ?? 0];
   if (!pair) return;
 
+  let aCode = pair.a.code, bCode = pair.b.code;
+  if (state.diffIdentOnly) {
+    aCode = stripToIdentifiers(aCode);
+    bCode = stripToIdentifiers(bCode);
+  }
+
   const diffStr = Diff.createTwoFilesPatch(
     pair.a.name, pair.b.name,
-    pair.a.code, pair.b.code,
+    aCode, bCode,
     '', '', { context: 5 }
   );
 
@@ -1109,6 +1143,113 @@ function renderMetaTab() {
   return html;
 }
 
+// --- Tab: Retrieval ---
+function renderRetrievalTab() {
+  const key = SAMPLE_KEYS[state.currentIdx];
+  const data = getSampleData(key);
+
+  // Find all retrieval modes (rag_* or retrieval_augmentation)
+  const retModes = MODES.filter(m => m.startsWith('rag_') || m === 'retrieval_augmentation');
+  if (!retModes.length) return '<div class="not-available">No retrieval modes in this experiment.</div>';
+
+  let html = '';
+
+  // Augmentation blocks side-by-side
+  const modesWithAug = retModes.filter(m => data[m]?.augmentation_block || data[m]?.retrieval_results);
+  if (modesWithAug.length > 0) {
+    html += '<div class="code-section-title">Augmentation Blocks (injected into prompt)</div>';
+    html += '<div class="code-grid">';
+    for (const mode of modesWithAug) {
+      const s = data[mode];
+      const mc = getModeColor(mode);
+      const aug = s?.augmentation_block || '(no augmentation block)';
+      html += codeBlock(getModeLabel(mode), mc.tag, aug);
+    }
+    html += '</div>';
+  }
+
+  // Retrieval results per mode
+  for (const mode of retModes) {
+    const s = data[mode];
+    if (!s?.retrieval_results?.length) continue;
+    const mc = getModeColor(mode);
+
+    html += `<div class="code-section-title" style="margin-top:24px">
+      Retrieved Methods <span class="mode-tag ${mc.tag}">${getModeLabel(mode)}</span>
+      <span style="font-size:11px;color:var(--text-dim);margin-left:8px">${s.retrieval_results.length} results</span>
+    </div>`;
+
+    // Retrieval metrics
+    const retMetrics = ['recall_at_k', 'api_coverage_at_k', 'mrr', 'retrieval_precision_at_k', 'retrieval_ndcg_at_k', 'owner_type_recall'];
+    const hasRetMetrics = retMetrics.some(rm => s.metrics?.[rm] !== undefined && s.metrics?.[rm] !== null);
+    if (hasRetMetrics) {
+      html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 16px">';
+      for (const rm of retMetrics) {
+        const v = s.metrics?.[rm];
+        if (v === undefined || v === null) continue;
+        html += `<div style="background:var(--bg-elevated);padding:6px 12px;border-radius:6px;font-size:12px">
+          <span style="color:var(--text-dim)">${rm}:</span> <strong>${Number(v).toFixed(4)}</strong></div>`;
+      }
+      html += '</div>';
+    }
+
+    // Query debug
+    if (s.retrieval_query) {
+      html += `<details style="margin-bottom:12px">
+        <summary style="font-size:12px;color:var(--text-dim);cursor:pointer">Search Query</summary>
+        <div style="background:var(--bg-elevated);padding:8px 12px;border-radius:6px;margin-top:4px;font-size:11px;font-family:monospace;white-space:pre-wrap;color:var(--text-dim)">${esc(s.retrieval_query)}</div>
+      </details>`;
+    }
+
+    // Results table
+    html += '<table class="meta-table"><thead><tr><th>#</th><th>Score</th><th>Method</th><th>File</th></tr></thead><tbody>';
+    for (let rank = 0; rank < s.retrieval_results.length; rank++) {
+      const r = s.retrieval_results[rank];
+      const sig = r.signature || r.id || '(unknown)';
+      const fp = r.filePath || r.file_path || '';
+      const score = typeof r.score === 'number' ? r.score.toFixed(4) : (r.score ?? '');
+      html += `<tr><td>${rank + 1}</td><td>${score}</td><td><code>${esc(sig)}</code></td><td style="font-size:11px;color:var(--text-dim)">${esc(fp)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+
+    // Expandable method bodies
+    html += '<details style="margin-top:8px"><summary style="font-size:12px;color:var(--text-dim);cursor:pointer">Show retrieved method bodies</summary>';
+    for (let rank = 0; rank < s.retrieval_results.length; rank++) {
+      const r = s.retrieval_results[rank];
+      const sig = r.signature || r.id || '(unknown)';
+      const body = r.content || r.methodBody || r.method_body || '';
+      const classFqn = r.classFqn || r.class_fqn || '';
+      const label = classFqn ? `${classFqn} :: ${sig}` : sig;
+      html += `<div style="margin-top:12px">
+        <div style="font-size:12px;color:var(--accent);margin-bottom:4px">#${rank + 1} ${esc(label)}</div>`;
+      if (body) {
+        const fullCode = sig + ' {\n' + body + '\n}';
+        html += `<div class="code-block"><pre><code class="language-java">${esc(fullCode)}</code></pre></div>`;
+      } else {
+        html += '<div style="font-size:11px;color:var(--text-dim)">(no body available)</div>';
+      }
+      html += '</div>';
+    }
+    html += '</details>';
+  }
+
+  // Also show oracle augmentation blocks for comparison
+  const oracleModes = MODES.filter(m => m === 'ordered_augmentation' || m === 'shuffled_augmentation');
+  const oracleWithAug = oracleModes.filter(m => data[m]?.augmentation_block);
+  if (oracleWithAug.length > 0) {
+    html += '<div class="code-section-title" style="margin-top:32px">Oracle Augmentation (for comparison)</div>';
+    html += '<div class="code-grid">';
+    for (const mode of oracleWithAug) {
+      const s = data[mode];
+      const mc = getModeColor(mode);
+      html += codeBlock(getModeLabel(mode), mc.tag, s.augmentation_block);
+    }
+    html += '</div>';
+  }
+
+  return html || '<div class="not-available">No retrieval data for this sample.</div>';
+}
+
 // --- Main Render ---
 function renderTabContent() {
   const c = document.getElementById('tab-content');
@@ -1116,6 +1257,7 @@ function renderTabContent() {
     case 'code': c.innerHTML = renderCodeTab(); break;
     case 'diff': c.innerHTML = renderDiffTab(); break;
     case 'prompt': c.innerHTML = renderPromptTab(); break;
+    case 'retrieval': c.innerHTML = renderRetrievalTab(); break;
     case 'meta': c.innerHTML = renderMetaTab(); break;
   }
 
@@ -1194,6 +1336,13 @@ function bindDiffControls() {
       computeDiff();
     });
   });
+  const identCb = document.getElementById('diff-ident-only');
+  if (identCb) {
+    identCb.addEventListener('change', () => {
+      state.diffIdentOnly = identCb.checked;
+      computeDiff();
+    });
+  }
 }
 
 // Keyboard nav
@@ -1216,8 +1365,8 @@ document.addEventListener('keydown', e => {
   } else if (e.key === '/') {
     e.preventDefault();
     document.getElementById('search-input').focus();
-  } else if (e.key >= '1' && e.key <= '4') {
-    const tabs = ['code', 'diff', 'prompt', 'meta'];
+  } else if (e.key >= '1' && e.key <= '5') {
+    const tabs = ['code', 'diff', 'prompt', 'retrieval', 'meta'];
     const tab = tabs[parseInt(e.key) - 1];
     if (tab) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
