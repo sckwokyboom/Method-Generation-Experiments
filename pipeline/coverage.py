@@ -234,25 +234,25 @@ def run_jacoco_gradle(
     # Create a temporary init script to inject JaCoCo
     init_script = project_path / "jacoco-init.gradle"
     init_script.write_text("""\
-allprojects {
-    afterEvaluate {
-        if (plugins.hasPlugin('java') && !plugins.hasPlugin('jacoco')) {
-            apply plugin: 'jacoco'
+projectsEvaluated {
+    rootProject.allprojects { proj ->
+        if (proj.plugins.hasPlugin('java') && !proj.plugins.hasPlugin('jacoco')) {
+            proj.apply plugin: 'jacoco'
         }
-        if (plugins.hasPlugin('jacoco')) {
-            tasks.withType(Test) {
+        if (proj.plugins.hasPlugin('jacoco')) {
+            proj.tasks.withType(Test) {
                 jacoco { enabled = true }
             }
-            if (!tasks.names.contains('jacocoXmlReport')) {
-                tasks.register('jacocoXmlReport', JacocoReport) {
-                    dependsOn tasks.named('test')
+            if (!proj.tasks.names.contains('jacocoXmlReport')) {
+                proj.tasks.register('jacocoXmlReport', JacocoReport) {
+                    dependsOn proj.tasks.named('test')
                     reports {
                         xml.required = true
                         html.required = false
                     }
-                    executionData.from(fileTree("${buildDir}/jacoco").include('*.exec'))
-                    sourceDirectories.from(files('src/main/java'))
-                    classDirectories.from(files("${buildDir}/classes/java/main"))
+                    executionData.from(proj.fileTree("${proj.buildDir}/jacoco").include('*.exec'))
+                    sourceDirectories.from(proj.files('src/main/java'))
+                    classDirectories.from(proj.files("${proj.buildDir}/classes/java/main"))
                 }
             }
         }
