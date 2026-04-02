@@ -244,7 +244,7 @@ projectsEvaluated {
                 jacoco { enabled = true }
             }
             if (!proj.tasks.names.contains('jacocoXmlReport')) {
-                proj.tasks.register('jacocoXmlReport', JacocoReport) {
+                proj.tasks.create('jacocoXmlReport', JacocoReport) {
                     dependsOn proj.tasks.named('test')
                     reports {
                         xml.required = true
