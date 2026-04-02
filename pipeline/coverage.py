@@ -229,7 +229,7 @@ def run_jacoco_gradle(
     timeout_seconds: int = 600,
 ) -> Path:
     """Run Gradle tests with JaCoCo and return the path to the XML report."""
-    project_path = Path(project_path)
+    project_path = Path(project_path).resolve()
 
     # Create a temporary init script to inject JaCoCo
     init_script = project_path / "jacoco-init.gradle"
@@ -259,8 +259,18 @@ allprojects {
             wrapper = project_path / "gradlew.bat"
         else:
             wrapper = project_path / "gradlew"
+
+        if not project_path.exists():
+            raise FileNotFoundError(f"Project path does not exist: {project_path}")
+        if not init_script.exists():
+            raise FileNotFoundError(f"Init script was not created: {init_script}")
+
+        gradle_cmd = str(wrapper) if wrapper.exists() else "gradle"
+        log.info("Gradle wrapper: %s (exists=%s)", wrapper, wrapper.exists())
+        log.info("Init script: %s (exists=%s)", init_script, init_script.exists())
+
         cmd = [
-            str(wrapper) if wrapper.exists() else "gradle",
+            gradle_cmd,
             "--init-script", str(init_script),
             "test", "jacocoXmlReport",
             "-q",
