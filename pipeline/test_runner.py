@@ -30,6 +30,10 @@ class TestResult:
     duration_ms: float
 
 
+# ---------------------------------------------------------------------------
+# Helpers: file manipulation
+# ---------------------------------------------------------------------------
+
 def _replace_method_body(method: ExtractedMethod, generated_body: str, project_path: Path) -> Path:
     """Replace method body in the source file and return the file path."""
     file_content = method.file_content
@@ -44,7 +48,6 @@ def _replace_method_body(method: ExtractedMethod, generated_body: str, project_p
     # Resolve absolute path from project root + relative file_path
     source_file = project_path / method.file_path
     if not source_file.exists():
-        # Try finding via src/main/java pattern
         parts = method.file_path.replace("\\", "/").split("/")
         try:
             src_idx = parts.index("src")
@@ -71,30 +74,94 @@ def _restore_file(method: ExtractedMethod, project_path: Path) -> None:
     source_file.write_text(method.file_content, encoding="utf-8")
 
 
-def _clean_test_reports(project_path: Path) -> None:
+# ---------------------------------------------------------------------------
+# Helpers: Gradle module / test class detection
+# ---------------------------------------------------------------------------
+
+def _module_from_file_path(file_path: str) -> str | None:
+    """Extract Gradle module name (first path component) from a relative file path.
+
+    E.g. 'junit-platform-engine/src/main/java/...' → 'junit-platform-engine'
+    """
+    parts = file_path.replace("\\", "/").split("/")
+    if len(parts) >= 2 and "src" in parts:
+        return parts[0]
+    return None
+
+
+def _test_path_to_fqn(test_path: str) -> str | None:
+    """Convert a test file path to a fully-qualified Java class name.
+
+    E.g. 'junit-platform-engine/src/test/java/org/junit/platform/engine/FooTest.java'
+       → 'org.junit.platform.engine.FooTest'
+
+    Also handles Kotlin (.kt) and Groovy (.groovy) test files.
+    """
+    normalized = test_path.replace("\\", "/")
+
+    # Find 'src/test/java/' or 'src/test/kotlin/' or 'src/test/groovy/' boundary
+    for marker in ("src/test/java/", "src/test/kotlin/", "src/test/groovy/",
+                    "src/testFixtures/java/"):
+        idx = normalized.find(marker)
+        if idx >= 0:
+            rel = normalized[idx + len(marker):]
+            # Strip extension and convert path separators to dots
+            for ext in (".java", ".kt", ".groovy"):
+                if rel.endswith(ext):
+                    rel = rel[: -len(ext)]
+                    break
+            return rel.replace("/", ".")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Helpers: test report management
+# ---------------------------------------------------------------------------
+
+def _clean_test_reports(project_path: Path, modules: list[str] | None = None) -> None:
     """Delete stale test result directories so Gradle/Maven re-runs tests.
 
-    Removing just the XML files is not enough: Gradle tracks the output
-    *directory* for up-to-date checks, so it must be gone entirely.
+    If *modules* is given, only cleans those submodules' reports (fast).
+    Otherwise cleans the entire project tree (slow but thorough).
     """
-    for d in project_path.rglob("build/test-results/test"):
-        if d.is_dir():
-            shutil.rmtree(d, ignore_errors=True)
-    for d in project_path.rglob("target/surefire-reports"):
-        if d.is_dir():
-            shutil.rmtree(d, ignore_errors=True)
+    if modules:
+        for mod in modules:
+            d = project_path / mod / "build" / "test-results" / "test"
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+            d = project_path / mod / "target" / "surefire-reports"
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+    else:
+        for d in project_path.rglob("build/test-results/test"):
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+        for d in project_path.rglob("target/surefire-reports"):
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
 
 
-def _parse_surefire_reports(project_path: Path) -> tuple[int, int, int, list[str]]:
+def _parse_test_reports(
+    project_path: Path, modules: list[str] | None = None,
+) -> tuple[int, int, int, list[str]]:
     """Parse Surefire/JUnit XML reports. Returns (run, passed, failed, failed_names).
 
-    Searches recursively to support multi-module Gradle/Maven projects where
-    each submodule produces its own test report directory.
+    If *modules* is given, only parses those submodules' reports.
+    Otherwise searches the entire project tree recursively.
     """
-    # Recursive search: finds reports in both root and submodule directories
     xml_files: list[Path] = []
-    xml_files.extend(project_path.rglob("build/test-results/test/TEST-*.xml"))
-    xml_files.extend(project_path.rglob("target/surefire-reports/TEST-*.xml"))
+
+    if modules:
+        for mod in modules:
+            gradle_dir = project_path / mod / "build" / "test-results" / "test"
+            if gradle_dir.is_dir():
+                xml_files.extend(gradle_dir.glob("TEST-*.xml"))
+            maven_dir = project_path / mod / "target" / "surefire-reports"
+            if maven_dir.is_dir():
+                xml_files.extend(maven_dir.glob("TEST-*.xml"))
+    else:
+        xml_files.extend(project_path.rglob("build/test-results/test/TEST-*.xml"))
+        xml_files.extend(project_path.rglob("target/surefire-reports/TEST-*.xml"))
 
     total_run = 0
     total_failed = 0
@@ -124,6 +191,84 @@ def _parse_surefire_reports(project_path: Path) -> tuple[int, int, int, list[str
     return total_run, total_passed, total_failed + total_errored, failed_names
 
 
+# ---------------------------------------------------------------------------
+# Helpers: Gradle command construction
+# ---------------------------------------------------------------------------
+
+def _gradlew_cmd(project_path: Path) -> str:
+    """Return a cross-platform path to the Gradle wrapper, relative to cwd."""
+    is_windows = platform.system() == "Windows"
+    if is_windows:
+        bat = project_path / "gradlew.bat"
+        return str(bat) if bat.exists() else "gradle"
+    sh = project_path / "gradlew"
+    return str(sh) if sh.exists() else "gradle"
+
+
+def _build_targeted_gradle_cmd(
+    project_path: Path,
+    test_file_paths: list[str],
+) -> tuple[list[str], list[str]]:
+    """Build a Gradle command that runs only the specified test classes.
+
+    Groups test classes by their module and builds a single Gradle invocation:
+      ./gradlew :mod1:test --tests FQN1 :mod2:test --tests FQN2 --no-daemon
+
+    Returns (cmd, list_of_modules) so callers know which modules to clean/parse.
+    """
+    from collections import defaultdict
+    module_tests: dict[str, list[str]] = defaultdict(list)
+
+    for test_path in test_file_paths:
+        fqn = _test_path_to_fqn(test_path)
+        module = _module_from_file_path(test_path)
+        if fqn and module:
+            module_tests[module].append(fqn)
+
+    if not module_tests:
+        return [], []
+
+    gradle = _gradlew_cmd(project_path)
+    cmd = [gradle]
+    modules = list(module_tests.keys())
+    for mod, fqns in module_tests.items():
+        cmd.append(f":{mod}:test")
+        for fqn in fqns:
+            cmd.extend(["--tests", fqn])
+    cmd.append("--no-daemon")
+    return cmd, modules
+
+
+def _build_full_gradle_cmd(
+    project_path: Path,
+    test_command: str | None,
+    build_system: str,
+) -> list[str]:
+    """Build a full-suite test command (fallback when no targeted tests available)."""
+    is_windows = platform.system() == "Windows"
+
+    if test_command:
+        if is_windows:
+            cmd = test_command.split()
+            if cmd and cmd[0] in ("./gradlew", "gradlew"):
+                bat = project_path / "gradlew.bat"
+                cmd[0] = str(bat) if bat.exists() else "gradle"
+        else:
+            cmd = shlex.split(test_command)
+        return cmd
+
+    if build_system == "maven":
+        return ["mvn", "test", "-f", str(project_path / "pom.xml"), "-q"]
+    if build_system == "gradle":
+        gradle = _gradlew_cmd(project_path)
+        return [gradle, "test", "-q", "--no-daemon"]
+    raise ValueError(f"Unknown build system: {build_system}")
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
 def run_test_evaluation(
     method: ExtractedMethod,
     generated_body: str,
@@ -131,9 +276,14 @@ def run_test_evaluation(
     build_system: str = "maven",
     timeout_seconds: int = 300,
     test_command: str | None = None,
+    test_file_paths: list[str] | None = None,
 ) -> TestResult:
-    """Replace method body, run tests, restore, and return results."""
-    project_path = Path(project_path).resolve()  # absolute for reliable subprocess cwd
+    """Replace method body, run tests, restore, and return results.
+
+    If *test_file_paths* is provided, runs only those test classes in the
+    relevant Gradle module instead of the full test suite.
+    """
+    project_path = Path(project_path).resolve()
     start = time.monotonic()
 
     try:
@@ -141,43 +291,34 @@ def run_test_evaluation(
 
         is_windows = platform.system() == "Windows"
 
-        if test_command:
-            if is_windows:
-                cmd = test_command.split()
-                # Replace Unix-style ./gradlew with absolute path to gradlew.bat
-                if cmd and cmd[0] in ("./gradlew", "gradlew"):
-                    gradlew_bat = project_path / "gradlew.bat"
-                    cmd[0] = str(gradlew_bat) if gradlew_bat.exists() else "gradle"
-            else:
-                cmd = shlex.split(test_command)
-        elif build_system == "maven":
-            cmd = ["mvn", "test", "-f", str(project_path / "pom.xml"), "-q"]
-        elif build_system == "gradle":
-            if is_windows:
-                gradlew_bat = project_path / "gradlew.bat"
-                gradle_cmd = str(gradlew_bat) if gradlew_bat.exists() else "gradle"
-            else:
-                gradlew_sh = project_path / "gradlew"
-                gradle_cmd = str(gradlew_sh) if gradlew_sh.exists() else "gradle"
-            cmd = [gradle_cmd, "test", "-q", "--no-daemon"]
-        else:
-            raise ValueError(f"Unknown build system: {build_system}")
+        # --- Decide: targeted or full test run ---
+        targeted_modules: list[str] | None = None
+
+        if test_file_paths and build_system == "gradle":
+            cmd, targeted_modules = _build_targeted_gradle_cmd(project_path, test_file_paths)
+            if not targeted_modules:
+                cmd = _build_full_gradle_cmd(project_path, test_command, build_system)
+
+        if targeted_modules is None:
+            cmd = _build_full_gradle_cmd(project_path, test_command, build_system)
 
         # Ensure gradlew is executable on Unix
         if not is_windows and cmd and cmd[0].endswith("gradlew"):
             gradlew_path = Path(cmd[0])
             if gradlew_path.exists() and not os.access(gradlew_path, os.X_OK):
                 gradlew_path.chmod(gradlew_path.stat().st_mode | 0o111)
-                log.debug("Made %s executable", gradlew_path)
 
         # On Windows, .bat/.cmd files must be run through cmd.exe
         if is_windows and cmd and (cmd[0].endswith(".bat") or cmd[0].endswith(".cmd")):
             cmd = ["cmd", "/c"] + cmd
 
-        # Remove stale reports so we only parse results from THIS run
-        _clean_test_reports(project_path)
+        # Remove stale reports (scoped to modules when targeted)
+        _clean_test_reports(project_path, modules=targeted_modules)
 
-        log.info("Running tests: %s (cwd=%s)", " ".join(cmd), project_path)
+        targeted = targeted_modules is not None and len(targeted_modules) > 0
+        log.info("Running tests%s: %s",
+                 f" (modules={targeted_modules})" if targeted else " (full suite)",
+                 " ".join(cmd))
         result = subprocess.run(
             cmd, capture_output=True, text=True,
             timeout=timeout_seconds, cwd=str(project_path),
@@ -190,7 +331,6 @@ def run_test_evaluation(
             stderr = result.stderr or ""
             stdout = result.stdout or ""
             combined = stderr + stdout
-            # Check if it's a compilation error vs test failure
             if "COMPILATION ERROR" in combined or "compiler" in combined.lower() \
                     or "Compilation failed" in combined:
                 build_success = False
@@ -198,7 +338,10 @@ def run_test_evaluation(
             log.warning("Build failed (rc=%d). Last output:\n%s", result.returncode,
                         "\n".join(error_messages))
 
-        tests_run, tests_passed, tests_failed, failed_names = _parse_surefire_reports(project_path)
+        # Parse reports (scoped to modules when targeted)
+        tests_run, tests_passed, tests_failed, failed_names = _parse_test_reports(
+            project_path, modules=targeted_modules,
+        )
 
         duration = (time.monotonic() - start) * 1000
 

@@ -27,10 +27,11 @@ def filter_methods(
     require_test_coverage: bool = False,
     coverage_map: CoverageMap | None = None,
     min_coverage_ratio: float = 0.0,
+    require_public: bool = False,
 ) -> list[ExtractedMethod]:
     filtered = []
     stats = {"category": 0, "statements": 0, "invocations": 0, "unresolved": 0,
-             "void": 0, "no_params": 0, "no_coverage": 0, "low_coverage": 0}
+             "void": 0, "no_params": 0, "no_coverage": 0, "low_coverage": 0, "non_public": 0}
     for m in methods:
         if m.category in exclude_categories:
             stats["category"] += 1
@@ -43,6 +44,9 @@ def filter_methods(
             continue
         if any(inv.resolution_mode != "EXACT" for inv in m.invocations):
             stats["unresolved"] += 1
+            continue
+        if require_public and not m.method_signature.startswith("public "):
+            stats["non_public"] += 1
             continue
         if require_non_void and (m.return_type is None or m.return_type == "void"):
             stats["void"] += 1
@@ -101,6 +105,7 @@ def build_dataset(
         require_test_coverage=config.extraction.require_test_coverage,
         coverage_map=coverage_map,
         min_coverage_ratio=config.extraction.min_coverage_ratio,
+        require_public=config.extraction.require_public,
     )
     sampled = sample_dataset(methods, config.dataset.sample_count, config.dataset.random_seed)
 

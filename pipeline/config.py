@@ -27,6 +27,7 @@ class ExtractionConfig:
     require_parameters: bool = False
     require_test_coverage: bool = False
     min_coverage_ratio: float = 0.0
+    require_public: bool = False
 
 
 @dataclass
