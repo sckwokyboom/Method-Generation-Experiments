@@ -5,6 +5,7 @@ import logging
 import os
 import platform
 import shlex
+import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -68,11 +69,17 @@ def _restore_file(method: ExtractedMethod, project_path: Path) -> None:
 
 
 def _clean_test_reports(project_path: Path) -> None:
-    """Delete stale test XML reports so we only parse fresh results."""
-    for xml_file in project_path.rglob("build/test-results/test/TEST-*.xml"):
-        xml_file.unlink()
-    for xml_file in project_path.rglob("target/surefire-reports/TEST-*.xml"):
-        xml_file.unlink()
+    """Delete stale test result directories so Gradle/Maven re-runs tests.
+
+    Removing just the XML files is not enough: Gradle tracks the output
+    *directory* for up-to-date checks, so it must be gone entirely.
+    """
+    for d in project_path.rglob("build/test-results/test"):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+    for d in project_path.rglob("target/surefire-reports"):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
 
 
 def _parse_surefire_reports(project_path: Path) -> tuple[int, int, int, list[str]]:
@@ -172,11 +179,16 @@ def run_test_evaluation(
         error_messages: list[str] = []
 
         if result.returncode != 0:
-            # Check if it's a compilation error vs test failure
             stderr = result.stderr or ""
-            if "COMPILATION ERROR" in stderr or "compiler" in stderr.lower():
+            stdout = result.stdout or ""
+            combined = stderr + stdout
+            # Check if it's a compilation error vs test failure
+            if "COMPILATION ERROR" in combined or "compiler" in combined.lower() \
+                    or "Compilation failed" in combined:
                 build_success = False
-                error_messages = [l for l in stderr.splitlines() if l.strip()][:10]
+            error_messages = [l for l in combined.splitlines() if l.strip()][-20:]
+            log.debug("Build failed (rc=%d). Last output:\n%s", result.returncode,
+                       "\n".join(error_messages))
 
         tests_run, tests_passed, tests_failed, failed_names = _parse_surefire_reports(project_path)
 
