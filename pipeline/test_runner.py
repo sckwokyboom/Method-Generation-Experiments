@@ -36,7 +36,10 @@ def _replace_method_body(method: ExtractedMethod, generated_body: str, project_p
     body_start = method.body_start_offset
     body_end = method.body_end_offset
 
-    modified = file_content[:body_start] + generated_body + file_content[body_end:]
+    # body_start points to '{', body_end points to one past '}'.
+    # generated_body is the LLM output WITHOUT braces (FIM puts '{' in prefix, '}' in suffix).
+    # Keep the '{' from the original file by slicing to body_start + 1.
+    modified = file_content[:body_start + 1] + generated_body + file_content[body_end:]
 
     # Resolve absolute path from project root + relative file_path
     source_file = project_path / method.file_path
