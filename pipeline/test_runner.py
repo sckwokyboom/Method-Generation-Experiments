@@ -67,6 +67,14 @@ def _restore_file(method: ExtractedMethod, project_path: Path) -> None:
     source_file.write_text(method.file_content, encoding="utf-8")
 
 
+def _clean_test_reports(project_path: Path) -> None:
+    """Delete stale test XML reports so we only parse fresh results."""
+    for xml_file in project_path.rglob("build/test-results/test/TEST-*.xml"):
+        xml_file.unlink()
+    for xml_file in project_path.rglob("target/surefire-reports/TEST-*.xml"):
+        xml_file.unlink()
+
+
 def _parse_surefire_reports(project_path: Path) -> tuple[int, int, int, list[str]]:
     """Parse Surefire/JUnit XML reports. Returns (run, passed, failed, failed_names).
 
@@ -150,6 +158,9 @@ def run_test_evaluation(
             if gradlew_path.exists() and not os.access(gradlew_path, os.X_OK):
                 gradlew_path.chmod(gradlew_path.stat().st_mode | 0o111)
                 log.debug("Made %s executable", gradlew_path)
+
+        # Remove stale reports so we only parse results from THIS run
+        _clean_test_reports(project_path)
 
         log.debug("Running tests: %s", " ".join(cmd))
         result = subprocess.run(
