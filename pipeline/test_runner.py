@@ -166,10 +166,14 @@ def run_test_evaluation(
                 gradlew_path.chmod(gradlew_path.stat().st_mode | 0o111)
                 log.debug("Made %s executable", gradlew_path)
 
+        # On Windows, .bat/.cmd files must be run through cmd.exe
+        if is_windows and cmd and (cmd[0].endswith(".bat") or cmd[0].endswith(".cmd")):
+            cmd = ["cmd", "/c"] + cmd
+
         # Remove stale reports so we only parse results from THIS run
         _clean_test_reports(project_path)
 
-        log.debug("Running tests: %s", " ".join(cmd))
+        log.info("Running tests: %s (cwd=%s)", " ".join(cmd), project_path)
         result = subprocess.run(
             cmd, capture_output=True, text=True,
             timeout=timeout_seconds, cwd=str(project_path),
@@ -215,6 +219,7 @@ def run_test_evaluation(
             duration_ms=duration,
         )
     except Exception as e:
+        log.warning("Test evaluation exception: %s", e)
         duration = (time.monotonic() - start) * 1000
         return TestResult(
             success=False, tests_run=0, tests_passed=0, tests_failed=0,

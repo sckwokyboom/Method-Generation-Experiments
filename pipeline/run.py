@@ -610,12 +610,14 @@ def run_experiment(config: Config) -> None:
                     save_prompts=config.output.save_prompts,
                     save_responses=config.output.save_responses,
                 )
+                status = "PASS" if test_result.success else "FAIL"
                 log.info(
                     "[%s] Test eval %d/%d: %s (tests=%d, passed=%d, failed=%d)",
-                    mode, i + 1, len(mode_results),
-                    "PASS" if test_result.success else "FAIL",
+                    mode, i + 1, len(mode_results), status,
                     test_result.tests_run, test_result.tests_passed, test_result.tests_failed,
                 )
+                if not test_result.success and test_result.error_messages:
+                    log.info("[%s]   errors: %s", mode, "; ".join(test_result.error_messages[:3]))
 
     config_summary = {
         "model_name": config.llm.model_name,
@@ -687,12 +689,14 @@ def recompute_test_evaluation(config: Config) -> None:
                 save_prompts=config.output.save_prompts,
                 save_responses=config.output.save_responses,
             )
+            status = "PASS" if test_result.success else "FAIL"
             log.info(
                 "[%s] Test eval %d/%d: %s (tests=%d, passed=%d, failed=%d)",
-                mode, i + 1, len(sample_files),
-                "PASS" if test_result.success else "FAIL",
+                mode, i + 1, len(sample_files), status,
                 test_result.tests_run, test_result.tests_passed, test_result.tests_failed,
             )
+            if not test_result.success and test_result.error_messages:
+                log.info("[%s]   errors: %s", mode, "; ".join(test_result.error_messages[:3]))
             mode_results.append(result)
 
         all_results[mode] = mode_results
