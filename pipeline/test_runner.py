@@ -82,9 +82,11 @@ def _module_from_file_path(file_path: str) -> str | None:
     """Extract Gradle module name (first path component) from a relative file path.
 
     E.g. 'junit-platform-engine/src/main/java/...' → 'junit-platform-engine'
+         'src/main/java/...' → None  (root project, no module prefix)
     """
     parts = file_path.replace("\\", "/").split("/")
-    if len(parts) >= 2 and "src" in parts:
+    # First component must NOT be 'src' itself — that means there's no module prefix
+    if len(parts) >= 3 and parts[0] != "src" and "src" in parts[1:]:
         return parts[0]
     return None
 
