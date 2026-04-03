@@ -576,6 +576,23 @@ def run_experiment(config: Config) -> None:
                              mode, i + 1, len(mode_results))
                     continue
 
+                # Skip samples that failed compilation — no point running tests
+                if result.compilability is not None and not result.compilability.success:
+                    log.info("[%s] Sample %d/%d not compilable, skipping test eval",
+                             mode, i + 1, len(mode_results))
+                    result.test_eval = TestEvalResult(
+                        success=False, tests_run=0, tests_passed=0, tests_failed=0,
+                        failed_test_names=[], build_success=False,
+                        error_messages=["Skipped: code does not compile"], duration_ms=0.0,
+                    )
+                    sample_path = samples_dir / f"sample_{i:03d}.json"
+                    write_sample_result(
+                        result, sample_path,
+                        save_prompts=config.output.save_prompts,
+                        save_responses=config.output.save_responses,
+                    )
+                    continue
+
                 # Find the corresponding method for source restoration
                 method = next(
                     (m for m in methods
@@ -661,6 +678,24 @@ def recompute_test_evaluation(config: Config) -> None:
 
         for i, sample_path in enumerate(sample_files):
             result = load_sample_result(sample_path)
+
+            # Skip samples that failed compilation — no point running tests
+            if result.compilability is not None and not result.compilability.success:
+                log.info("[%s] Sample %d/%d not compilable, skipping test eval",
+                         mode, i + 1, len(sample_files))
+                result.test_eval = TestEvalResult(
+                    success=False, tests_run=0, tests_passed=0, tests_failed=0,
+                    failed_test_names=[], build_success=False,
+                    error_messages=["Skipped: code does not compile"], duration_ms=0.0,
+                )
+                write_sample_result(
+                    result, sample_path,
+                    save_prompts=config.output.save_prompts,
+                    save_responses=config.output.save_responses,
+                )
+                mode_results.append(result)
+                continue
+
             method = methods_by_id.get(result.method_id)
             if method is None:
                 log.warning("Could not find method for %s, skipping test eval", result.method_id)
