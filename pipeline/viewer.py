@@ -700,6 +700,7 @@ body {
         <button class="filter-chip" data-filter="compilable">Compilable</button>
         <button class="filter-chip" data-filter="errors">Has Errors</button>
         <button class="filter-chip" data-filter="tested">Tested</button>
+        <button class="filter-chip" data-filter="public">Public</button>
       </div>
     </div>
     <div id="sample-list"></div>
@@ -745,7 +746,7 @@ const state = {
   currentIdx: 0,
   activeTab: 'code',
   searchQuery: '',
-  filters: { em: false, compilable: false, errors: false, tested: false },
+  filters: { em: false, compilable: false, errors: false, tested: false, public: false },
   diffPair: null,
   diffFormat: 'side-by-side',
   diffIdentOnly: false,
@@ -828,8 +829,12 @@ function getFilteredKeys() {
     }
     if (state.filters.tested) {
       const data = getSampleData(key);
-      const hasTested = MODES.some(m => data[m]?.test_eval || data[m]?.test_file_paths?.length > 0);
+      const hasTested = MODES.some(m => data[m]?.test_eval?.tests_run > 0);
       if (!hasTested) return false;
+    }
+    if (state.filters.public) {
+      const sig = any.method_signature || '';
+      if (!sig.startsWith('public ')) return false;
     }
     return true;
   });
