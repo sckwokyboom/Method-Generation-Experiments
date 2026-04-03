@@ -263,6 +263,10 @@ class SampleResult:
     retrieval_results: list[dict] | None = None
     retrieval_query: str | None = None
     test_eval: TestEvalResult | None = None
+    coverage_ratio: float | None = None
+    line_coverage: list[dict] | None = None  # [{line: int, covered: bool, source: str}]
+    test_file_paths: list[str] | None = None
+    generated_invocations: list[dict] | None = None  # [{signature, resolutionMode, orderIndex}]
 
     def to_dict(self) -> dict:
         d = {
@@ -315,6 +319,14 @@ class SampleResult:
                 "error_messages": self.test_eval.error_messages,
                 "duration_ms": self.test_eval.duration_ms,
             }
+        if self.coverage_ratio is not None:
+            d["coverage_ratio"] = self.coverage_ratio
+        if self.line_coverage is not None:
+            d["line_coverage"] = self.line_coverage
+        if self.test_file_paths is not None:
+            d["test_file_paths"] = self.test_file_paths
+        if self.generated_invocations is not None:
+            d["generated_invocations"] = self.generated_invocations
         return d
 
     @classmethod
@@ -377,4 +389,8 @@ class SampleResult:
             retrieval_results=d.get("retrieval_results"),
             retrieval_query=d.get("retrieval_query"),
             test_eval=test_eval,
+            coverage_ratio=d.get("coverage_ratio"),
+            line_coverage=d.get("line_coverage"),
+            test_file_paths=d.get("test_file_paths"),
+            generated_invocations=d.get("generated_invocations"),
         )

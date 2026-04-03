@@ -89,6 +89,63 @@ public class MethodExtractor {
         return new ExtractionResult(projectName, meta, cpResult.classpathEntries(), allMethods);
     }
 
+    /**
+     * Extract invocations from a generated method body placed into the original file context.
+     * Reconstructs the file by replacing the body at [bodyStartOffset, bodyEndOffset) with
+     * the generated body, then parses with JDT and extracts invocations from the method
+     * that contains the replaced region.
+     */
+    public List<ResolvedInvocation> extractInvocationsFromBody(
+            String originalFileContent,
+            String filePath,
+            int bodyStartOffset,
+            int bodyEndOffset,
+            String generatedBody,
+            String[] classpath,
+            String[] sourceRoots
+    ) {
+        // Reconstruct file: keep everything before '{' (bodyStart) and after '}' (bodyEnd)
+        String reconstructed = originalFileContent.substring(0, bodyStartOffset + 1)
+                + generatedBody
+                + originalFileContent.substring(bodyEndOffset);
+
+        Path sourceFile = projectPath.resolve(filePath);
+        CompilationUnit cu = parseFile(reconstructed, sourceFile, classpath, sourceRoots);
+
+        // Find the method declaration that contains our replaced body
+        int searchPos = bodyStartOffset + 1; // inside the body
+        ASTNode node = NodeFinder.perform(cu, searchPos, 0);
+
+        // Walk up to find the enclosing MethodDeclaration
+        while (node != null && !(node instanceof MethodDeclaration)) {
+            node = node.getParent();
+        }
+
+        if (node instanceof MethodDeclaration md && md.getBody() != null) {
+            return extractInvocations(md.getBody(), cu);
+        }
+
+        // Fallback: if we couldn't find the method, try to find any method that overlaps
+        List<ResolvedInvocation> fallbackResult = new ArrayList<>();
+        cu.accept(new ASTVisitor() {
+            @Override
+            public boolean visit(MethodDeclaration md) {
+                Block body = md.getBody();
+                if (body == null) return true;
+                int start = body.getStartPosition();
+                int end = start + body.getLength();
+                // Check if this method's body overlaps with our insertion point
+                if (start <= bodyStartOffset + 1 && end >= bodyStartOffset + 1) {
+                    fallbackResult.addAll(extractInvocations(body, cu));
+                    return false; // stop visiting
+                }
+                return true;
+            }
+        });
+
+        return fallbackResult;
+    }
+
     private List<Path> findJavaSources() {
         List<Path> sources = new ArrayList<>();
         try (Stream<Path> stream = Files.walk(projectPath)) {

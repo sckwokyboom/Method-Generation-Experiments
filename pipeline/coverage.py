@@ -65,6 +65,17 @@ def jvm_descriptor_return_type(descriptor: str) -> str:
 # ── Coverage data model ──────────────────────────────────────────────────────
 
 @dataclass
+class LineCoverage:
+    line_number: int
+    covered_instructions: int
+    missed_instructions: int
+
+    @property
+    def is_covered(self) -> bool:
+        return self.covered_instructions > 0
+
+
+@dataclass
 class MethodCoverage:
     method_name: str
     descriptor: str
@@ -87,6 +98,8 @@ class MethodCoverage:
 class CoverageMap:
     """Maps class_fqn → list of covered methods."""
     _data: dict[str, list[MethodCoverage]] = field(default_factory=dict)
+    # Keyed by "package.name/SourceFile.java" → {line_number → LineCoverage}
+    _source_lines: dict[str, dict[int, LineCoverage]] = field(default_factory=dict)
 
     def add(self, class_fqn: str, method: MethodCoverage) -> None:
         self._data.setdefault(class_fqn, []).append(method)
@@ -139,6 +152,52 @@ class CoverageMap:
 
     def total_count(self) -> int:
         return sum(len(methods) for methods in self._data.values())
+
+    def add_source_line(self, source_key: str, line: LineCoverage) -> None:
+        self._source_lines.setdefault(source_key, {})[line.line_number] = line
+
+    def get_line_coverage(
+        self,
+        class_fqn: str,
+        start_line: int,
+        end_line: int,
+    ) -> list[LineCoverage] | None:
+        """Return per-line coverage for a class within [start_line, end_line].
+
+        Maps *class_fqn* (e.g. ``com.example.Foo``) to the JaCoCo source-file
+        key ``com/example/Foo.java`` and looks up cached line data.
+        """
+        # class_fqn → source key: replace dots with /, append .java
+        # Inner classes: com.example.Outer.Inner → com/example/Outer.java
+        parts = class_fqn.split(".")
+        # Find boundary between package and class: first segment starting with uppercase
+        pkg_parts: list[str] = []
+        cls_parts: list[str] = []
+        found_class = False
+        for p in parts:
+            if not found_class and p and p[0].isupper():
+                found_class = True
+            if found_class:
+                cls_parts.append(p)
+            else:
+                pkg_parts.append(p)
+        if not cls_parts:
+            # Fallback: treat last segment as class name
+            cls_parts = [parts[-1]]
+            pkg_parts = parts[:-1]
+
+        source_file = cls_parts[0] + ".java"
+        source_key = "/".join(pkg_parts) + "/" + source_file if pkg_parts else source_file
+
+        lines_map = self._source_lines.get(source_key)
+        if lines_map is None:
+            return None
+
+        result = []
+        for ln in range(start_line, end_line + 1):
+            if ln in lines_map:
+                result.append(lines_map[ln])
+        return result if result else None
 
     def __repr__(self) -> str:
         return f"CoverageMap(covered={self.covered_count()}, total={self.total_count()})"
@@ -200,6 +259,21 @@ def parse_jacoco_xml(xml_path: str | Path) -> CoverageMap:
                         lines_covered=lines_covered,
                         lines_missed=lines_missed,
                     ),
+                )
+
+    # Parse per-line coverage from <sourcefile> elements
+    for pkg_elem in root.iter("package"):
+        pkg_name = pkg_elem.get("name", "")
+        for sf_elem in pkg_elem.iter("sourcefile"):
+            sf_name = sf_elem.get("name", "")
+            source_key = pkg_name + "/" + sf_name if pkg_name else sf_name
+            for line_elem in sf_elem.iter("line"):
+                nr = int(line_elem.get("nr", "0"))
+                ci = int(line_elem.get("ci", "0"))
+                mi = int(line_elem.get("mi", "0"))
+                coverage.add_source_line(
+                    source_key,
+                    LineCoverage(line_number=nr, covered_instructions=ci, missed_instructions=mi),
                 )
 
     log.info("Parsed JaCoCo report: %s", coverage)

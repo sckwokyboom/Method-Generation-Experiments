@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pipeline.compilability import check_compilability
 from pipeline.config import Config
-from pipeline.coverage import build_coverage_map
+from pipeline.coverage import CoverageMap, build_coverage_map
 from pipeline.dataset import build_dataset, load_extraction
 from pipeline.llm import generate_completion
 from pipeline.metrics import (
@@ -101,6 +101,31 @@ def _with_retrieval_config(config: Config, ret_cfg):
         config.retrieval = original
 
 
+def _offset_to_line(content: str, offset: int) -> int:
+    """Convert a character offset to a 1-based line number."""
+    return content[:offset].count("\n") + 1
+
+
+def _find_test_files(method: ExtractedMethod, project_path: str) -> list[str] | None:
+    """Search test source files for references to the target method name."""
+    from pathlib import Path as _Path
+    project = _Path(project_path)
+    test_dirs = list(project.rglob("src/test"))
+    if not test_dirs:
+        return None
+    method_name = method.method_name
+    found: list[str] = []
+    for test_dir in test_dirs:
+        for java_file in test_dir.rglob("*.java"):
+            try:
+                text = java_file.read_text(encoding="utf-8", errors="ignore")
+                if method_name in text:
+                    found.append(str(java_file.relative_to(project)))
+            except OSError:
+                continue
+    return found if found else None
+
+
 def process_sample(
     method: ExtractedMethod,
     mode: str,
@@ -109,6 +134,7 @@ def process_sample(
     sample_idx: int,
     total: int,
     retrieval_response: RetrievalResponse | None = None,
+    coverage_map: CoverageMap | None = None,
 ) -> SampleResult:
     log.info("[%s] Processing sample %d/%d: %s#%s",
              mode, sample_idx + 1, total, method.class_fqn, method.method_name)
@@ -208,6 +234,32 @@ def process_sample(
         retrieval_results_dicts = [r.to_dict() for r in effective_retrieval.results]
         retrieval_query = effective_retrieval.query_debug
 
+    # Per-line coverage from JaCoCo
+    cov_ratio = None
+    line_cov = None
+    if coverage_map is not None:
+        cov_ratio = coverage_map.get_method_coverage_ratio(
+            method.class_fqn, method.method_name, method.parameter_types,
+        )
+        start_line = _offset_to_line(method.file_content, method.body_start_offset)
+        end_line = _offset_to_line(method.file_content, method.body_end_offset)
+        lc = coverage_map.get_line_coverage(method.class_fqn, start_line, end_line)
+        if lc is not None:
+            gt_lines = method.file_content.splitlines()
+            line_cov = []
+            for entry in lc:
+                src = gt_lines[entry.line_number - 1] if entry.line_number <= len(gt_lines) else ""
+                line_cov.append({
+                    "line": entry.line_number,
+                    "covered": entry.is_covered,
+                    "source": src,
+                })
+
+    # Test file references
+    test_files = None
+    if coverage_map is not None:
+        test_files = _find_test_files(method, config.project.path)
+
     return SampleResult(
         method_id=method_id,
         file_path=method.file_path,
@@ -230,6 +282,9 @@ def process_sample(
         },
         retrieval_results=retrieval_results_dicts,
         retrieval_query=retrieval_query,
+        coverage_ratio=cov_ratio,
+        line_coverage=line_cov,
+        test_file_paths=test_files,
     )
 
 
@@ -316,6 +371,7 @@ def _run_mode_sequential(
     samples_dir: Path,
     mode_dir: Path,
     retrieval_responses: list[RetrievalResponse | None] | None = None,
+    coverage_map: CoverageMap | None = None,
 ) -> list[SampleResult]:
     results_by_idx: dict[int, SampleResult] = {}
     completed = 0
@@ -337,7 +393,8 @@ def _run_mode_sequential(
 
         ret_resp = retrieval_responses[i] if retrieval_responses else None
         try:
-            result = process_sample(method, mode, config, classpath, i, len(methods), ret_resp)
+            result = process_sample(method, mode, config, classpath, i, len(methods), ret_resp,
+                                    coverage_map=coverage_map)
             write_sample_result(
                 result, sample_path,
                 save_prompts=config.output.save_prompts,
@@ -364,6 +421,7 @@ def _run_mode_concurrent(
     mode_dir: Path,
     max_workers: int,
     retrieval_responses: list[RetrievalResponse | None] | None = None,
+    coverage_map: CoverageMap | None = None,
 ) -> list[SampleResult]:
     results_by_idx: dict[int, SampleResult] = {}
     completed = 0
@@ -398,7 +456,8 @@ def _run_mode_concurrent(
         sample_path = samples_dir / f"sample_{i:03d}.json"
         ret_resp = retrieval_responses[i] if retrieval_responses else None
         try:
-            result = process_sample(method, mode, config, classpath, i, len(methods), ret_resp)
+            result = process_sample(method, mode, config, classpath, i, len(methods), ret_resp,
+                                    coverage_map=coverage_map)
             write_sample_result(
                 result, sample_path,
                 save_prompts=config.output.save_prompts,
@@ -493,12 +552,12 @@ def run_experiment(config: Config) -> None:
         if max_concurrent > 1:
             mode_results = _run_mode_concurrent(
                 methods, mode, config, classpath, samples_dir, mode_dir, max_concurrent,
-                mode_retrieval,
+                mode_retrieval, coverage_map=coverage_map,
             )
         else:
             mode_results = _run_mode_sequential(
                 methods, mode, config, classpath, samples_dir, mode_dir,
-                mode_retrieval,
+                mode_retrieval, coverage_map=coverage_map,
             )
 
         all_results[mode] = mode_results

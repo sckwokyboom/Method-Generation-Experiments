@@ -21,16 +21,17 @@ import java.util.concurrent.Callable;
         name = "method-extractor",
         description = "Extracts Java method bodies and invocation signatures for LLM experiments",
         mixinStandardHelpOptions = true,
-        version = "0.1.0"
+        version = "0.1.0",
+        subcommands = {InvocationExtractorCli.class}
 )
 public class ExtractorCli implements Callable<Integer> {
     private static final Logger log = LoggerFactory.getLogger(ExtractorCli.class);
 
-    @Option(names = {"--project-path"}, required = true,
+    @Option(names = {"--project-path"},
             description = "Path to the target Java project")
     private Path projectPath;
 
-    @Option(names = {"--output", "-o"}, required = true,
+    @Option(names = {"--output", "-o"},
             description = "Output JSON file path")
     private Path outputPath;
 
@@ -48,6 +49,14 @@ public class ExtractorCli implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        if (projectPath == null) {
+            log.error("--project-path is required for extraction");
+            return 2;
+        }
+        if (outputPath == null) {
+            log.error("--output is required for extraction");
+            return 2;
+        }
         if (!Files.exists(projectPath) || !Files.isDirectory(projectPath)) {
             log.error("Project path does not exist or is not a directory: {}", projectPath);
             return 1;

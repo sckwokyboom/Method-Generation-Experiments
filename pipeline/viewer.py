@@ -638,10 +638,47 @@ body {
 .d2h-diff-table { border-collapse: collapse !important; }
 .d2h-diff-tbody tr td { border-color: var(--border) !important; }
 
+/* Invocations tab */
+.inv-comparison-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px; }
+.inv-mode-card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.inv-mode-header { margin-bottom: 12px; }
+.inv-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.inv-metric { display: flex; flex-direction: column; align-items: center; }
+.inv-metric label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.inv-metric-val { font-size: 16px; font-weight: 600; color: var(--text); }
+.inv-columns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.inv-col { padding: 8px; border-radius: 6px; }
+.inv-col-gt-only { background: rgba(243,139,168,0.1); border: 1px solid rgba(243,139,168,0.3); }
+.inv-col-both { background: rgba(166,227,161,0.1); border: 1px solid rgba(166,227,161,0.3); }
+.inv-col-gen-only { background: rgba(249,226,175,0.1); border: 1px solid rgba(249,226,175,0.3); }
+.inv-col-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.inv-count { font-weight: 400; opacity: 0.7; }
+.inv-item { font-size: 13px; padding: 2px 0; }
+.inv-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+.inv-details { margin-top: 4px; }
+.inv-details summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.inv-extracted { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.inv-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-family: monospace; }
+.inv-tag-match { background: rgba(166,227,161,0.2); color: #a6e3a1; }
+.inv-tag-extra { background: rgba(249,226,175,0.2); color: #f9e2af; }
+
+/* Coverage display */
+.cov-line { display: flex; font-family: monospace; font-size: 13px; line-height: 1.5; }
+.cov-line-nr { width: 40px; text-align: right; padding-right: 8px; color: var(--muted); user-select: none; flex-shrink: 0; }
+.cov-line-src { flex: 1; white-space: pre; padding: 0 4px; }
+.cov-covered { background: rgba(166,227,161,0.15); }
+.cov-missed { background: rgba(243,139,168,0.15); }
+.cov-container { border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; max-height: 400px; overflow-y: auto; }
+.cov-summary { margin-bottom: 8px; font-size: 14px; }
+.cov-summary strong { color: var(--accent); }
+.cov-test-files { margin-top: 8px; }
+.cov-test-files code { font-size: 12px; }
+
 @media (max-width: 900px) {
   #sidebar { width: 220px; min-width: 220px; }
   .code-grid { grid-template-columns: 1fr; }
   #metrics-row { grid-template-columns: 1fr; }
+  .inv-comparison-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -658,6 +695,7 @@ body {
         <button class="filter-chip" data-filter="em">EM Only</button>
         <button class="filter-chip" data-filter="compilable">Compilable</button>
         <button class="filter-chip" data-filter="errors">Has Errors</button>
+        <button class="filter-chip" data-filter="tested">Tested</button>
       </div>
     </div>
     <div id="sample-list"></div>
@@ -675,6 +713,7 @@ body {
       <button class="tab-btn" data-tab="prompt">Prompt <span class="tab-hint">3</span></button>
       <button class="tab-btn" data-tab="retrieval">Retrieval <span class="tab-hint">4</span></button>
       <button class="tab-btn" data-tab="meta">Meta <span class="tab-hint">5</span></button>
+      <button class="tab-btn" data-tab="invocations">Invocations <span class="tab-hint">6</span></button>
     </div>
     <div id="tab-content"></div>
   </div>
@@ -702,7 +741,7 @@ const state = {
   currentIdx: 0,
   activeTab: 'code',
   searchQuery: '',
-  filters: { em: false, compilable: false, errors: false },
+  filters: { em: false, compilable: false, errors: false, tested: false },
   diffPair: null,
   diffFormat: 'side-by-side',
   diffIdentOnly: false,
@@ -782,6 +821,11 @@ function getFilteredKeys() {
       const data = getSampleData(key);
       const hasErr = MODES.some(m => data[m]?.metrics?.compile_errors?.length > 0);
       if (!hasErr) return false;
+    }
+    if (state.filters.tested) {
+      const data = getSampleData(key);
+      const hasTested = MODES.some(m => data[m]?.test_eval || data[m]?.test_file_paths?.length > 0);
+      if (!hasTested) return false;
     }
     return true;
   });
@@ -1140,6 +1184,41 @@ function renderMetaTab() {
     html += '</tbody></table>';
   }
 
+  // Test Coverage
+  if (any?.coverage_ratio != null || any?.line_coverage || any?.test_file_paths) {
+    html += '<div class="code-section-title" style="margin-top:24px;">Test Coverage</div>';
+
+    // Coverage ratio
+    if (any.coverage_ratio != null) {
+      const pct = (any.coverage_ratio * 100).toFixed(1);
+      const color = any.coverage_ratio >= 0.8 ? '#a6e3a1' : any.coverage_ratio >= 0.5 ? '#f9e2af' : '#f38ba8';
+      html += `<div class="cov-summary">Line coverage: <strong style="color:${color}">${pct}%</strong></div>`;
+    }
+
+    // Per-line coverage visualization
+    if (any.line_coverage && any.line_coverage.length > 0) {
+      const covered = any.line_coverage.filter(l => l.covered).length;
+      const total = any.line_coverage.length;
+      html += `<div class="cov-summary">${covered} / ${total} executable lines covered</div>`;
+      html += '<div class="cov-container">';
+      for (const lc of any.line_coverage) {
+        const cls = lc.covered ? 'cov-covered' : 'cov-missed';
+        html += `<div class="cov-line ${cls}"><span class="cov-line-nr">${lc.line}</span><span class="cov-line-src">${esc(lc.source)}</span></div>`;
+      }
+      html += '</div>';
+    }
+
+    // Test file paths
+    if (any.test_file_paths && any.test_file_paths.length > 0) {
+      html += '<div class="cov-test-files"><div class="code-section-title" style="margin-top:12px;">Test Files Referencing This Method</div>';
+      html += '<ul>';
+      for (const p of any.test_file_paths) {
+        html += `<li><code>${esc(p)}</code></li>`;
+      }
+      html += '</ul></div>';
+    }
+  }
+
   return html;
 }
 
@@ -1250,6 +1329,179 @@ function renderRetrievalTab() {
   return html || '<div class="not-available">No retrieval data for this sample.</div>';
 }
 
+// --- Invocation helpers ---
+function parseSimpleName(signature) {
+  // "com.example.Foo::bar(int) -> void" → "bar"
+  // "UNRESOLVED<name>" → "name"
+  // "obj.name" (tree-sitter) → "name"
+  if (signature.startsWith('UNRESOLVED<')) {
+    return signature.slice(11, -1);
+  }
+  const colons = signature.indexOf('::');
+  if (colons >= 0) {
+    const rest = signature.substring(colons + 2);
+    const paren = rest.indexOf('(');
+    return paren > 0 ? rest.substring(0, paren) : rest;
+  }
+  // tree-sitter format: "obj.method" or just "method"
+  const dot = signature.lastIndexOf('.');
+  return dot >= 0 ? signature.substring(dot + 1) : signature;
+}
+
+function invocationSignatures(invocations) {
+  // Returns Set of full signatures for EXACT invocations
+  const sigs = new Set();
+  for (const inv of (invocations || [])) {
+    if (inv.resolution_mode === 'EXACT' || inv.resolutionMode === 'EXACT') {
+      sigs.add(inv.signature);
+    }
+  }
+  return sigs;
+}
+
+function invocationSimpleNames(invocations) {
+  const names = new Set();
+  for (const inv of (invocations || [])) {
+    names.add(parseSimpleName(inv.signature || ''));
+  }
+  return names;
+}
+
+function setIntersection(a, b) { return new Set([...a].filter(x => b.has(x))); }
+function setDifference(a, b) { return new Set([...a].filter(x => !b.has(x))); }
+function setUnion(a, b) { return new Set([...a, ...b]); }
+
+function resolutionBadge(mode) {
+  if (mode === 'EXACT') return '<span class="badge badge-yes">EXACT</span>';
+  if (mode === 'TREESITTER') return '<span class="badge badge-na">TREESITTER</span>';
+  return '<span class="badge badge-no">UNRESOLVED</span>';
+}
+
+// --- Tab: Invocations ---
+function renderInvocationsTab() {
+  const key = SAMPLE_KEYS[state.currentIdx];
+  const data = getSampleData(key);
+  const any = getAnySample(key);
+  if (!any) return '<div class="not-available">No data</div>';
+
+  const gtInvocations = any.invocations_ordered || [];
+
+  let html = '';
+
+  // --- GT invocations table ---
+  html += '<div class="code-section-title">Ground Truth Invocations (extracted via JDT AST)</div>';
+  if (gtInvocations.length === 0) {
+    html += '<div class="not-available">No invocations in ground truth</div>';
+  } else {
+    html += '<table class="meta-table"><thead><tr><th>#</th><th>Signature</th><th>Simple Name</th><th>Resolution</th></tr></thead><tbody>';
+    for (const inv of gtInvocations) {
+      const sn = parseSimpleName(inv.signature);
+      html += `<tr><td>${inv.order_index ?? ''}</td><td><code>${esc(inv.signature)}</code></td><td><code>${esc(sn)}</code></td><td>${resolutionBadge(inv.resolution_mode)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  // --- Per-mode comparison ---
+  html += '<div class="code-section-title" style="margin-top:24px;">Invocation Comparison (per mode)</div>';
+  html += '<div class="inv-comparison-grid">';
+
+  for (const mode of MODES) {
+    const s = data[mode];
+    if (!s) continue;
+    const mc = getModeColor(mode);
+
+    const genInvocations = s.generated_invocations || [];
+    const hasPrecomputed = s.generated_invocations != null;
+
+    if (!hasPrecomputed) {
+      html += `<div class="inv-mode-card">`;
+      html += `<div class="inv-mode-header"><span class="mode-tag ${mc.tag}">${getModeLabel(mode)}</span></div>`;
+      html += '<div class="not-available">No pre-computed invocations. Run <code>python -m pipeline.enrich_samples</code> with <code>--extractor-jar</code> to extract.</div>';
+      html += '</div>';
+      continue;
+    }
+
+    // Try full-signature comparison first (EXACT vs EXACT)
+    const gtExact = invocationSignatures(gtInvocations);
+    const genExact = invocationSignatures(genInvocations);
+    const exactInter = setIntersection(gtExact, genExact);
+    const exactGtOnly = setDifference(gtExact, genExact);
+    const exactGenOnly = setDifference(genExact, gtExact);
+    const exactUnion = setUnion(gtExact, genExact);
+    const exactIou = exactUnion.size > 0 ? (exactInter.size / exactUnion.size) : (gtExact.size === 0 && genExact.size === 0 ? 1.0 : 0.0);
+    const exactRecall = gtExact.size > 0 ? (exactInter.size / gtExact.size) : 1.0;
+
+    // Also simple-name comparison (includes UNRESOLVED and TREESITTER)
+    const gtNames = invocationSimpleNames(gtInvocations);
+    const genNames = invocationSimpleNames(genInvocations);
+    const nameInter = setIntersection(gtNames, genNames);
+    const nameGtOnly = setDifference(gtNames, genNames);
+    const nameGenOnly = setDifference(genNames, gtNames);
+    const nameUnion = setUnion(gtNames, genNames);
+    const nameIou = nameUnion.size > 0 ? (nameInter.size / nameUnion.size) : (gtNames.size === 0 && genNames.size === 0 ? 1.0 : 0.0);
+    const nameRecall = gtNames.size > 0 ? (nameInter.size / gtNames.size) : 1.0;
+
+    // Determine which comparison to show prominently
+    const hasExact = genInvocations.some(i => i.resolutionMode === 'EXACT');
+    const primaryIou = hasExact ? exactIou : nameIou;
+    const primaryRecall = hasExact ? exactRecall : nameRecall;
+
+    html += `<div class="inv-mode-card">`;
+    html += `<div class="inv-mode-header"><span class="mode-tag ${mc.tag}">${getModeLabel(mode)}</span></div>`;
+
+    // Summary metrics
+    html += '<div class="inv-summary">';
+    if (hasExact) {
+      html += `<div class="inv-metric"><label>Sig IoU</label><span class="inv-metric-val">${(exactIou * 100).toFixed(1)}%</span></div>`;
+      html += `<div class="inv-metric"><label>Sig Recall</label><span class="inv-metric-val">${(exactRecall * 100).toFixed(1)}%</span></div>`;
+    }
+    html += `<div class="inv-metric"><label>Name IoU</label><span class="inv-metric-val">${(nameIou * 100).toFixed(1)}%</span></div>`;
+    html += `<div class="inv-metric"><label>Name Recall</label><span class="inv-metric-val">${(nameRecall * 100).toFixed(1)}%</span></div>`;
+    html += `<div class="inv-metric"><label>|GT|</label><span class="inv-metric-val">${gtInvocations.length}</span></div>`;
+    html += `<div class="inv-metric"><label>|Gen|</label><span class="inv-metric-val">${genInvocations.length}</span></div>`;
+    html += '</div>';
+
+    // Three columns — use simple name comparison for the visual
+    html += '<div class="inv-columns">';
+
+    html += '<div class="inv-col inv-col-gt-only"><div class="inv-col-title">GT Only <span class="inv-count">' + nameGtOnly.size + '</span></div>';
+    for (const n of [...nameGtOnly].sort()) html += `<div class="inv-item"><code>${esc(n)}</code></div>`;
+    if (nameGtOnly.size === 0) html += '<div class="inv-empty">none</div>';
+    html += '</div>';
+
+    html += '<div class="inv-col inv-col-both"><div class="inv-col-title">Both <span class="inv-count">' + nameInter.size + '</span></div>';
+    for (const n of [...nameInter].sort()) html += `<div class="inv-item"><code>${esc(n)}</code></div>`;
+    if (nameInter.size === 0) html += '<div class="inv-empty">none</div>';
+    html += '</div>';
+
+    html += '<div class="inv-col inv-col-gen-only"><div class="inv-col-title">Gen Only <span class="inv-count">' + nameGenOnly.size + '</span></div>';
+    for (const n of [...nameGenOnly].sort()) html += `<div class="inv-item"><code>${esc(n)}</code></div>`;
+    if (nameGenOnly.size === 0) html += '<div class="inv-empty">none</div>';
+    html += '</div>';
+
+    html += '</div>'; // inv-columns
+
+    // Generated invocations table for manual verification
+    html += `<details class="inv-details"><summary>Generated Invocations (${genInvocations.length})</summary>`;
+    html += '<table class="meta-table"><thead><tr><th>#</th><th>Signature</th><th>Resolution</th><th>In GT?</th></tr></thead><tbody>';
+    for (const inv of genInvocations) {
+      const sn = parseSimpleName(inv.signature || '');
+      const inGt = gtNames.has(sn);
+      const fullMatch = gtExact.has(inv.signature);
+      const matchIcon = fullMatch ? '&#10004;&#10004;' : inGt ? '&#10004;' : '&#10008;';
+      const matchColor = fullMatch ? '#a6e3a1' : inGt ? '#f9e2af' : '#f38ba8';
+      html += `<tr><td>${inv.orderIndex ?? ''}</td><td><code>${esc(inv.signature || '')}</code></td><td>${resolutionBadge(inv.resolutionMode)}</td><td style="color:${matchColor}">${matchIcon}</td></tr>`;
+    }
+    html += '</tbody></table></details>';
+
+    html += '</div>'; // inv-mode-card
+  }
+
+  html += '</div>'; // inv-comparison-grid
+
+  return html;
+}
+
 // --- Main Render ---
 function renderTabContent() {
   const c = document.getElementById('tab-content');
@@ -1259,6 +1511,7 @@ function renderTabContent() {
     case 'prompt': c.innerHTML = renderPromptTab(); break;
     case 'retrieval': c.innerHTML = renderRetrievalTab(); break;
     case 'meta': c.innerHTML = renderMetaTab(); break;
+    case 'invocations': c.innerHTML = renderInvocationsTab(); break;
   }
 
   // Highlight code blocks
@@ -1365,8 +1618,8 @@ document.addEventListener('keydown', e => {
   } else if (e.key === '/') {
     e.preventDefault();
     document.getElementById('search-input').focus();
-  } else if (e.key >= '1' && e.key <= '5') {
-    const tabs = ['code', 'diff', 'prompt', 'retrieval', 'meta'];
+  } else if (e.key >= '1' && e.key <= '6') {
+    const tabs = ['code', 'diff', 'prompt', 'retrieval', 'meta', 'invocations'];
     const tab = tabs[parseInt(e.key) - 1];
     if (tab) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
