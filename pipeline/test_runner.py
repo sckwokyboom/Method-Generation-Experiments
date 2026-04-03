@@ -36,7 +36,7 @@ def _replace_method_body(method: ExtractedMethod, generated_body: str, project_p
     body_start = method.body_start_offset
     body_end = method.body_end_offset
 
-    modified = file_content[:body_start + 1] + generated_body + file_content[body_end:]
+    modified = file_content[:body_start] + generated_body + file_content[body_end:]
 
     # Resolve absolute path from project root + relative file_path
     source_file = project_path / method.file_path
@@ -187,8 +187,8 @@ def run_test_evaluation(
                     or "Compilation failed" in combined:
                 build_success = False
             error_messages = [l for l in combined.splitlines() if l.strip()][-20:]
-            log.debug("Build failed (rc=%d). Last output:\n%s", result.returncode,
-                       "\n".join(error_messages))
+            log.warning("Build failed (rc=%d). Last output:\n%s", result.returncode,
+                        "\n".join(error_messages))
 
         tests_run, tests_passed, tests_failed, failed_names = _parse_surefire_reports(project_path)
 
