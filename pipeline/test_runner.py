@@ -130,7 +130,7 @@ def run_test_evaluation(
     test_command: str | None = None,
 ) -> TestResult:
     """Replace method body, run tests, restore, and return results."""
-    project_path = Path(project_path)
+    project_path = Path(project_path).resolve()  # absolute for reliable subprocess cwd
     start = time.monotonic()
 
     try:
@@ -141,7 +141,7 @@ def run_test_evaluation(
         if test_command:
             if is_windows:
                 cmd = test_command.split()
-                # Replace Unix-style ./gradlew with gradlew.bat on Windows
+                # Replace Unix-style ./gradlew with absolute path to gradlew.bat
                 if cmd and cmd[0] in ("./gradlew", "gradlew"):
                     gradlew_bat = project_path / "gradlew.bat"
                     cmd[0] = str(gradlew_bat) if gradlew_bat.exists() else "gradle"
@@ -151,17 +151,18 @@ def run_test_evaluation(
             cmd = ["mvn", "test", "-f", str(project_path / "pom.xml"), "-q"]
         elif build_system == "gradle":
             if is_windows:
-                gradlew = project_path / "gradlew.bat"
+                gradlew_bat = project_path / "gradlew.bat"
+                gradle_cmd = str(gradlew_bat) if gradlew_bat.exists() else "gradle"
             else:
-                gradlew = project_path / "gradlew"
-            gradle_cmd = str(gradlew) if gradlew.exists() else "gradle"
+                gradlew_sh = project_path / "gradlew"
+                gradle_cmd = str(gradlew_sh) if gradlew_sh.exists() else "gradle"
             cmd = [gradle_cmd, "test", "-q", "--no-daemon"]
         else:
             raise ValueError(f"Unknown build system: {build_system}")
 
         # Ensure gradlew is executable on Unix
         if not is_windows and cmd and cmd[0].endswith("gradlew"):
-            gradlew_path = Path(cmd[0]) if os.path.isabs(cmd[0]) else project_path / cmd[0]
+            gradlew_path = Path(cmd[0])
             if gradlew_path.exists() and not os.access(gradlew_path, os.X_OK):
                 gradlew_path.chmod(gradlew_path.stat().st_mode | 0o111)
                 log.debug("Made %s executable", gradlew_path)
