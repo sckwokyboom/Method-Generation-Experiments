@@ -630,6 +630,86 @@ def run_experiment(config: Config) -> None:
     )
 
 
+def recompute_test_evaluation(config: Config) -> None:
+    """Re-run test evaluation on existing sample results without re-generating code."""
+    output_dir = Path(config.output.dir)
+    project_path = Path(config.project.path)
+
+    # Load extraction data to get method objects for source restoration
+    extraction_data = load_extraction(config.extraction.output)
+    methods_by_id = {
+        f"{m.class_fqn}#{m.method_name}": m for m in extraction_data.methods
+    }
+
+    all_results: dict[str, list[SampleResult]] = {}
+
+    for mode in config.experiment.modes:
+        samples_dir = output_dir / mode / "samples"
+        if not samples_dir.exists():
+            log.warning("No samples directory for mode %s, skipping", mode)
+            continue
+
+        sample_files = sorted(samples_dir.glob("sample_*.json"))
+        if not sample_files:
+            log.warning("No sample files found in %s, skipping", samples_dir)
+            continue
+
+        log.info("=== Recomputing test evaluation for mode: %s (%d samples) ===", mode, len(sample_files))
+        mode_results: list[SampleResult] = []
+
+        for i, sample_path in enumerate(sample_files):
+            result = load_sample_result(sample_path)
+            method = methods_by_id.get(result.method_id)
+            if method is None:
+                log.warning("Could not find method for %s, skipping test eval", result.method_id)
+                mode_results.append(result)
+                continue
+
+            log.info("[%s] Test eval %d/%d: %s", mode, i + 1, len(sample_files), result.method_id)
+            test_result = run_test_evaluation(
+                method, result.generated, project_path,
+                build_system=config.test_evaluation.build_system,
+                timeout_seconds=config.test_evaluation.timeout_seconds,
+                test_command=config.project.test_command or None,
+            )
+            result.test_eval = TestEvalResult(
+                success=test_result.success,
+                tests_run=test_result.tests_run,
+                tests_passed=test_result.tests_passed,
+                tests_failed=test_result.tests_failed,
+                failed_test_names=test_result.failed_test_names,
+                build_success=test_result.build_success,
+                error_messages=test_result.error_messages,
+                duration_ms=test_result.duration_ms,
+            )
+            write_sample_result(
+                result, sample_path,
+                save_prompts=config.output.save_prompts,
+                save_responses=config.output.save_responses,
+            )
+            log.info(
+                "[%s] Test eval %d/%d: %s (tests=%d, passed=%d, failed=%d)",
+                mode, i + 1, len(sample_files),
+                "PASS" if test_result.success else "FAIL",
+                test_result.tests_run, test_result.tests_passed, test_result.tests_failed,
+            )
+            mode_results.append(result)
+
+        all_results[mode] = mode_results
+
+    config_summary = {
+        "model_name": config.llm.model_name,
+        "sample_count": config.dataset.sample_count,
+    }
+    generate_report(
+        all_results, config.output.dir,
+        save_prompts=config.output.save_prompts,
+        save_responses=config.output.save_responses,
+        config_summary=config_summary,
+    )
+    log.info("=== Recompute complete ===")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Java Method Generation Experiment Pipeline")
     parser.add_argument("--config", default="config.yaml", help="Path to config file")
@@ -637,6 +717,8 @@ def main():
     parser.add_argument("--output-dir", default=None, help="Override output directory (default: from config)")
     parser.add_argument("--skip-extraction", action="store_true", help="Skip extraction step")
     parser.add_argument("--skip-compilability", action="store_true", help="Skip compilability checks")
+    parser.add_argument("--recompute-tests", action="store_true",
+                        help="Re-run test evaluation on existing results (skip generation)")
     args = parser.parse_args()
 
     config = Config.load(args.config)
@@ -649,6 +731,10 @@ def main():
 
     if args.skip_compilability:
         config.compilability.enabled = False
+
+    if args.recompute_tests:
+        recompute_test_evaluation(config)
+        return
 
     if args.skip_extraction:
         if not Path(config.extraction.output).exists():

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import platform
+import shlex
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -65,38 +68,40 @@ def _restore_file(method: ExtractedMethod, project_path: Path) -> None:
 
 
 def _parse_surefire_reports(project_path: Path) -> tuple[int, int, int, list[str]]:
-    """Parse Surefire/JUnit XML reports. Returns (run, passed, failed, failed_names)."""
-    report_dirs = [
-        project_path / "target" / "surefire-reports",
-        project_path / "build" / "test-results" / "test",
-    ]
+    """Parse Surefire/JUnit XML reports. Returns (run, passed, failed, failed_names).
+
+    Searches recursively to support multi-module Gradle/Maven projects where
+    each submodule produces its own test report directory.
+    """
+    # Recursive search: finds reports in both root and submodule directories
+    xml_files: list[Path] = []
+    xml_files.extend(project_path.rglob("build/test-results/test/TEST-*.xml"))
+    xml_files.extend(project_path.rglob("target/surefire-reports/TEST-*.xml"))
 
     total_run = 0
     total_failed = 0
     total_errored = 0
     failed_names: list[str] = []
 
-    for report_dir in report_dirs:
-        if not report_dir.exists():
-            continue
-        for xml_file in report_dir.glob("TEST-*.xml"):
-            try:
-                tree = ET.parse(xml_file)
-                root = tree.getroot()
-                tests = int(root.get("tests", "0"))
-                failures = int(root.get("failures", "0"))
-                errors = int(root.get("errors", "0"))
-                total_run += tests
-                total_failed += failures
-                total_errored += errors
+    for xml_file in xml_files:
+        try:
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+            tests = int(root.get("tests", "0"))
+            failures = int(root.get("failures", "0"))
+            errors = int(root.get("errors", "0"))
+            total_run += tests
+            total_failed += failures
+            total_errored += errors
 
-                for testcase in root.iter("testcase"):
-                    if testcase.find("failure") is not None or testcase.find("error") is not None:
-                        name = f"{testcase.get('classname', '')}.{testcase.get('name', '')}"
-                        failed_names.append(name)
-            except ET.ParseError:
-                log.warning("Failed to parse test report: %s", xml_file)
+            for testcase in root.iter("testcase"):
+                if testcase.find("failure") is not None or testcase.find("error") is not None:
+                    name = f"{testcase.get('classname', '')}.{testcase.get('name', '')}"
+                    failed_names.append(name)
+        except ET.ParseError:
+            log.warning("Failed to parse test report: %s", xml_file)
 
+    log.debug("Found %d test XML reports, tests_run=%d", len(xml_files), total_run)
     total_passed = total_run - total_failed - total_errored
     return total_run, total_passed, total_failed + total_errored, failed_names
 
@@ -116,13 +121,21 @@ def run_test_evaluation(
     try:
         _replace_method_body(method, generated_body, project_path)
 
+        is_windows = platform.system() == "Windows"
+
         if test_command:
-            cmd = test_command.split()
+            if is_windows:
+                cmd = test_command.split()
+                # Replace Unix-style ./gradlew with gradlew.bat on Windows
+                if cmd and cmd[0] in ("./gradlew", "gradlew"):
+                    gradlew_bat = project_path / "gradlew.bat"
+                    cmd[0] = str(gradlew_bat) if gradlew_bat.exists() else "gradle"
+            else:
+                cmd = shlex.split(test_command)
         elif build_system == "maven":
             cmd = ["mvn", "test", "-f", str(project_path / "pom.xml"), "-q"]
         elif build_system == "gradle":
-            import platform
-            if platform.system() == "Windows":
+            if is_windows:
                 gradlew = project_path / "gradlew.bat"
             else:
                 gradlew = project_path / "gradlew"
@@ -130,6 +143,13 @@ def run_test_evaluation(
             cmd = [gradle_cmd, "test", "-q", "--no-daemon"]
         else:
             raise ValueError(f"Unknown build system: {build_system}")
+
+        # Ensure gradlew is executable on Unix
+        if not is_windows and cmd and cmd[0].endswith("gradlew"):
+            gradlew_path = Path(cmd[0]) if os.path.isabs(cmd[0]) else project_path / cmd[0]
+            if gradlew_path.exists() and not os.access(gradlew_path, os.X_OK):
+                gradlew_path.chmod(gradlew_path.stat().st_mode | 0o111)
+                log.debug("Made %s executable", gradlew_path)
 
         log.debug("Running tests: %s", " ".join(cmd))
         result = subprocess.run(
