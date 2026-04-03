@@ -99,10 +99,7 @@ def render(headers, metrics, means, stds, output_path: Path):
         row_colors = [bg]
         for j in range(n_cols):
             if row_m[j] is not None:
-                txt = f"{row_m[j]:.4f}"
-                if row_s[j] is not None and row_s[j] > 0:
-                    txt += f"  ±{row_s[j]:.4f}"
-                row_text.append(txt)
+                row_text.append(f"{row_m[j]:.4f}")
             else:
                 row_text.append("—")
             row_colors.append(bg)
