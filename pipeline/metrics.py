@@ -95,6 +95,34 @@ def lcs_with_backtrack(generated: str, reference: str) -> tuple[int, list[str]]:
     return lcs_len, tokens
 
 
+def longest_common_substring(generated: str, reference: str) -> tuple[int, list[str]]:
+    gen_tokens = tokenize_code(generated)
+    ref_tokens = tokenize_code(reference)
+
+    m, n = len(gen_tokens), len(ref_tokens)
+    if m == 0 or n == 0:
+        return 0, []
+
+    prev = [0] * (n + 1)
+    curr = [0] * (n + 1)
+    best_len = 0
+    best_end_j = 0
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if gen_tokens[i - 1] == ref_tokens[j - 1]:
+                curr[j] = prev[j - 1] + 1
+                if curr[j] > best_len:
+                    best_len = curr[j]
+                    best_end_j = j
+            else:
+                curr[j] = 0
+        prev, curr = curr, [0] * (n + 1)
+
+    tokens = ref_tokens[best_end_j - best_len : best_end_j] if best_len > 0 else []
+    return best_len, tokens
+
+
 def lcs_ratio(generated: str, reference: str) -> float:
     gen_tokens = tokenize_code(generated)
     ref_tokens = tokenize_code(reference)
@@ -127,6 +155,9 @@ def compute_all_metrics(
     stripped_ref_tokens = tokenize_code(stripped_ref)
     max_stripped_len = max(len(stripped_gen_tokens), len(stripped_ref_tokens))
 
+    # Longest Common Substring on identifier/literal-stripped code.
+    lcsubstr_len, lcsubstr_toks = longest_common_substring(stripped_gen, stripped_ref)
+
     # CodeBLEU.
     codebleu_score = compute_codebleu(generated, reference) if include_codebleu else None
 
@@ -141,6 +172,9 @@ def compute_all_metrics(
         lcs_tokens=lcs_toks,
         lcs_no_ident_length=lcs_no_ident_len,
         lcs_no_ident_ratio=lcs_no_ident_len / max_stripped_len if max_stripped_len > 0 else 1.0,
+        lcsubstring_no_ident_length=lcsubstr_len,
+        lcsubstring_no_ident_ratio=lcsubstr_len / max_stripped_len if max_stripped_len > 0 else 1.0,
+        lcsubstring_no_ident_tokens=lcsubstr_toks,
         codebleu=codebleu_score,
     )
 

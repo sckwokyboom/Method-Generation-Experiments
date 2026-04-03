@@ -209,6 +209,9 @@ class MetricsResult:
     gen_token_count: int | None = None
     ref_token_count: int | None = None
     lcs_tokens: list[str] | None = None
+    lcsubstring_no_ident_length: int | None = None
+    lcsubstring_no_ident_ratio: float | None = None
+    lcsubstring_no_ident_tokens: list[str] | None = None
     codebleu: float | None = None
 
     # --- Retrieval quality metrics ---
@@ -296,6 +299,9 @@ class SampleResult:
                 "gen_token_count": self.metrics.gen_token_count,
                 "ref_token_count": self.metrics.ref_token_count,
                 "lcs_tokens": self.metrics.lcs_tokens,
+                "lcsubstring_no_ident_length": self.metrics.lcsubstring_no_ident_length,
+                "lcsubstring_no_ident_ratio": self.metrics.lcsubstring_no_ident_ratio,
+                "lcsubstring_no_ident_tokens": self.metrics.lcsubstring_no_ident_tokens,
                 "codebleu": self.metrics.codebleu,
                 "recall_at_k": self.metrics.recall_at_k,
                 "api_coverage_at_k": self.metrics.api_coverage_at_k,
@@ -349,6 +355,9 @@ class SampleResult:
             gen_token_count=metrics_d.get("gen_token_count"),
             ref_token_count=metrics_d.get("ref_token_count"),
             lcs_tokens=metrics_d.get("lcs_tokens"),
+            lcsubstring_no_ident_length=metrics_d.get("lcsubstring_no_ident_length"),
+            lcsubstring_no_ident_ratio=metrics_d.get("lcsubstring_no_ident_ratio"),
+            lcsubstring_no_ident_tokens=metrics_d.get("lcsubstring_no_ident_tokens"),
             codebleu=metrics_d.get("codebleu"),
             recall_at_k=metrics_d.get("recall_at_k"),
             api_coverage_at_k=metrics_d.get("api_coverage_at_k"),

@@ -15,6 +15,7 @@ METRIC_LABELS = {
     "iou": "IoU",
     "lcs_ratio": "LCS Ratio",
     "lcs_no_ident_ratio": "LCS (no ident)",
+    "lcsubstring_no_ident_ratio": "LCSubstr (no ident)",
     "codebleu": "CodeBLEU",
     "compilable": "Compilable",
     "test_pass": "Test Pass",

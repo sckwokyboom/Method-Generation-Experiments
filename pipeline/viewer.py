@@ -947,10 +947,23 @@ function renderMetrics() {
           <label>Tokens (gen / ref)</label>
           <div class="metric-value">${m.gen_token_count ?? '?'} / ${m.ref_token_count ?? '?'}</div>
         </div>
+        <div class="metric-item">
+          <label>LCSubstr (no ident)</label>
+          <div class="metric-value" style="color:${mc.color}">${(m.lcsubstring_no_ident_ratio ?? 0).toFixed(4)}</div>
+          ${bar(m.lcsubstring_no_ident_ratio ?? 0, mc.color)}
+        </div>
+        <div class="metric-item">
+          <label>LCSubstr Length</label>
+          <div class="metric-value">${m.lcsubstring_no_ident_length ?? 0}</div>
+        </div>
       </div>
       ${m.lcs_tokens ? `<details class="lcs-debug">
         <summary>LCS tokens (${m.lcs_tokens.length})</summary>
         <code class="lcs-tokens">${m.lcs_tokens.map(t => esc(t)).join(' ')}</code>
+      </details>` : ''}
+      ${m.lcsubstring_no_ident_tokens ? `<details class="lcs-debug">
+        <summary>LCSubstr tokens (${m.lcsubstring_no_ident_tokens.length})</summary>
+        <code class="lcs-tokens">${m.lcsubstring_no_ident_tokens.map(t => esc(t)).join(' ')}</code>
       </details>` : ''}
     </div>`;
   }).join('');
