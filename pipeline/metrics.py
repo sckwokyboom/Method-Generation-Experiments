@@ -63,6 +63,38 @@ def longest_common_subsequence(generated: str, reference: str) -> int:
     return prev[n]
 
 
+def lcs_with_backtrack(generated: str, reference: str) -> tuple[int, list[str]]:
+    gen_tokens = tokenize_code(generated)
+    ref_tokens = tokenize_code(reference)
+
+    m, n = len(gen_tokens), len(ref_tokens)
+    if m == 0 or n == 0:
+        return 0, []
+
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if gen_tokens[i - 1] == ref_tokens[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+
+    lcs_len = dp[m][n]
+    tokens: list[str] = []
+    i, j = m, n
+    while i > 0 and j > 0:
+        if gen_tokens[i - 1] == ref_tokens[j - 1]:
+            tokens.append(gen_tokens[i - 1])
+            i -= 1
+            j -= 1
+        elif dp[i - 1][j] >= dp[i][j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    tokens.reverse()
+    return lcs_len, tokens
+
+
 def lcs_ratio(generated: str, reference: str) -> float:
     gen_tokens = tokenize_code(generated)
     ref_tokens = tokenize_code(reference)
@@ -82,7 +114,7 @@ def compute_all_metrics(
     norm_gen = normalize_code(generated, identifier_unify=identifier_unify)
     norm_ref = normalize_code(reference, identifier_unify=identifier_unify)
 
-    lcs_len = longest_common_subsequence(norm_gen, norm_ref)
+    lcs_len, lcs_toks = lcs_with_backtrack(norm_gen, norm_ref)
     gen_tokens = tokenize_code(norm_gen)
     ref_tokens = tokenize_code(norm_ref)
     max_tok_len = max(len(gen_tokens), len(ref_tokens))
@@ -104,6 +136,9 @@ def compute_all_metrics(
         iou=token_iou(norm_gen, norm_ref),
         lcs_length=lcs_len,
         lcs_ratio=lcs_len / max_tok_len if max_tok_len > 0 else 1.0,
+        gen_token_count=len(gen_tokens),
+        ref_token_count=len(ref_tokens),
+        lcs_tokens=lcs_toks,
         lcs_no_ident_length=lcs_no_ident_len,
         lcs_no_ident_ratio=lcs_no_ident_len / max_stripped_len if max_stripped_len > 0 else 1.0,
         codebleu=codebleu_score,

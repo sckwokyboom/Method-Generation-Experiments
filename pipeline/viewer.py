@@ -379,6 +379,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.lcs-debug { margin-top: 8px; font-size: 0.85em; }
+.lcs-debug summary { cursor: pointer; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .3px; }
+.lcs-tokens { word-break: break-all; white-space: pre-wrap; display: block; max-height: 200px; overflow-y: auto; font-size: 12px; margin-top: 4px; padding: 4px; background: var(--bar-bg); border-radius: 4px; }
+
 .metric-bar {
   height: 4px;
   background: var(--bar-bg);
@@ -934,7 +938,15 @@ function renderMetrics() {
           <label>LCS Length</label>
           <div class="metric-value">${m.lcs_length ?? 0}</div>
         </div>
+        <div class="metric-item">
+          <label>Tokens (gen / ref)</label>
+          <div class="metric-value">${m.gen_token_count ?? '?'} / ${m.ref_token_count ?? '?'}</div>
+        </div>
       </div>
+      ${m.lcs_tokens ? `<details class="lcs-debug">
+        <summary>LCS tokens (${m.lcs_tokens.length})</summary>
+        <code class="lcs-tokens">${m.lcs_tokens.map(t => esc(t)).join(' ')}</code>
+      </details>` : ''}
     </div>`;
   }).join('');
 }
