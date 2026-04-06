@@ -80,8 +80,7 @@ public class ExtractorCli implements Callable<Integer> {
 
             ObjectMapper mapper = new ObjectMapper();
             mapper.enable(SerializationFeature.INDENT_OUTPUT);
-            String json = mapper.writeValueAsString(result);
-            Files.writeString(outputPath, json, StandardCharsets.UTF_8);
+            mapper.writeValue(outputPath.toFile(), result);
 
             log.info("Wrote {} extracted methods to {}", result.methods().size(), outputPath);
             return 0;
