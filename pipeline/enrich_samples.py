@@ -108,6 +108,114 @@ def _treesitter_extract_invocations(code: str) -> list[dict] | None:
     return invocations
 
 
+# ── tree-sitter: direct test method invocation index ────────────────────────
+
+_TEST_ANNOTATIONS = frozenset({"Test", "ParameterizedTest", "RepeatedTest"})
+
+
+def _has_test_annotation(method_node) -> bool:
+    """Check if a method_declaration node has a JUnit test annotation."""
+    for child in method_node.children:
+        if child.type == "modifiers":
+            for mod in child.children:
+                if mod.type in ("marker_annotation", "annotation"):
+                    name_node = mod.child_by_field_name("name")
+                    if name_node and name_node.text.decode("utf-8") in _TEST_ANNOTATIONS:
+                        return True
+    return False
+
+
+def _enclosing_class_name(node) -> str:
+    """Walk up the tree to find the enclosing class name."""
+    cur = node.parent
+    while cur is not None:
+        if cur.type in ("class_declaration", "enum_declaration", "interface_declaration"):
+            name_node = cur.child_by_field_name("name")
+            if name_node:
+                return name_node.text.decode("utf-8")
+        cur = cur.parent
+    return "<unknown>"
+
+
+def _collect_invoked_names(body_node) -> set[str]:
+    """Collect all method names invoked directly in a subtree."""
+    names: set[str] = set()
+    stack = [body_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "method_invocation":
+            name_node = node.child_by_field_name("name")
+            if name_node:
+                names.add(name_node.text.decode("utf-8"))
+        for child in node.children:
+            stack.append(child)
+    return names
+
+
+def _build_test_invocation_index(project_path: Path) -> dict[str, list[dict]] | None:
+    """Parse all test files with tree-sitter and build an index:
+    method_name -> [{test_file, test_class, test_method}, ...]
+    """
+    try:
+        import tree_sitter_java as tsjava
+        from tree_sitter import Language, Parser
+    except ImportError:
+        log.warning("tree-sitter not available; skipping direct test method detection")
+        return None
+
+    parser = Parser(Language(tsjava.language()))
+
+    test_dirs = list(project_path.rglob("src/test"))
+    if not test_dirs:
+        return {}
+
+    index: dict[str, list[dict]] = {}
+
+    for test_dir in test_dirs:
+        for java_file in test_dir.rglob("*.java"):
+            try:
+                text = java_file.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+
+            tree = parser.parse(text.encode("utf-8"))
+
+            # Walk top-level to find method declarations inside classes
+            stack = [tree.root_node]
+            while stack:
+                node = stack.pop()
+                if node.type == "method_declaration" and _has_test_annotation(node):
+                    method_name_node = node.child_by_field_name("name")
+                    if not method_name_node:
+                        continue
+                    test_method_name = method_name_node.text.decode("utf-8")
+
+                    body_node = node.child_by_field_name("body")
+                    if not body_node:
+                        continue
+
+                    invoked = _collect_invoked_names(body_node)
+                    if not invoked:
+                        continue
+
+                    test_class = _enclosing_class_name(node)
+                    rel_path = str(java_file.relative_to(project_path))
+
+                    entry = {
+                        "test_file": rel_path,
+                        "test_class": test_class,
+                        "test_method": test_method_name,
+                    }
+                    for name in invoked:
+                        index.setdefault(name, []).append(entry)
+
+                for child in node.children:
+                    stack.append(child)
+
+    log.info("Test invocation index: %d unique method names from test files", len(index))
+    return index
+
+
 # ── JDT batch extraction via extractor JAR ───────────────────────────────────
 
 def _discover_source_roots(project_path: Path) -> list[str]:
@@ -276,6 +384,11 @@ def enrich_results(
         )
         log.info("JDT extracted invocations for %d / %d samples", len(jdt_results), len(samples_for_jdt))
 
+    # Build test invocation index (parse test files once)
+    test_invocation_index: dict[str, list[dict]] | None = None
+    if project_path:
+        test_invocation_index = _build_test_invocation_index(project_path)
+
     # Second pass: enrich each sample
     enriched = 0
     skipped = 0
@@ -312,6 +425,13 @@ def enrich_results(
             test_files = _find_test_files(method.method_name, project_path)
             if test_files:
                 sample.test_file_paths = test_files
+                changed = True
+
+        # Direct test method invocations
+        if method and test_invocation_index is not None and sample.direct_test_methods is None:
+            direct = test_invocation_index.get(method.method_name)
+            if direct:
+                sample.direct_test_methods = direct
                 changed = True
 
         # Generated invocations

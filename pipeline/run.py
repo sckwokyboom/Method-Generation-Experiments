@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import logging
@@ -316,6 +317,9 @@ def _compute_run_manifest(mode: str, config: Config) -> str:
         "shuffle_seed": config.experiment.shuffle_seed,
         "sample_count": config.dataset.sample_count,
         "random_seed": config.dataset.random_seed,
+        "extraction": dataclasses.asdict(config.extraction),
+        "project_path": config.project.path,
+        "project_tag": config.project.tag,
     }
     ret_cfg = _retrieval_config_for_mode(config, mode)
     if ret_cfg:

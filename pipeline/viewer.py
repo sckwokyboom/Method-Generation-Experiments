@@ -828,9 +828,8 @@ function getFilteredKeys() {
       if (!hasErr) return false;
     }
     if (state.filters.tested) {
-      const data = getSampleData(key);
-      const hasTested = MODES.some(m => data[m]?.test_eval?.tests_run > 0);
-      if (!hasTested) return false;
+      const any = getAnySample(key);
+      if (!any?.direct_test_methods?.length) return false;
     }
     if (state.filters.public) {
       const sig = any.method_signature || '';
@@ -1215,7 +1214,7 @@ function renderMetaTab() {
   }
 
   // Test Coverage
-  if (any?.coverage_ratio != null || any?.line_coverage || any?.test_file_paths) {
+  if (any?.coverage_ratio != null || any?.line_coverage || any?.test_file_paths || any?.direct_test_methods?.length > 0) {
     html += '<div class="code-section-title" style="margin-top:24px;">Test Coverage</div>';
 
     // Coverage ratio
@@ -1246,6 +1245,16 @@ function renderMetaTab() {
         html += `<li><code>${esc(p)}</code></li>`;
       }
       html += '</ul></div>';
+    }
+
+    // Direct test method invocations
+    if (any.direct_test_methods && any.direct_test_methods.length > 0) {
+      html += '<div class="code-section-title" style="margin-top:12px;">Test Methods Directly Invoking This Method</div>';
+      html += '<table class="meta-table"><thead><tr><th>Test Class</th><th>Test Method</th><th>File</th></tr></thead><tbody>';
+      for (const tm of any.direct_test_methods) {
+        html += `<tr><td><code>${esc(tm.test_class)}</code></td><td><code>${esc(tm.test_method)}</code></td><td><code>${esc(tm.test_file)}</code></td></tr>`;
+      }
+      html += '</tbody></table>';
     }
   }
 

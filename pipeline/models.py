@@ -273,6 +273,7 @@ class SampleResult:
     line_coverage: list[dict] | None = None  # [{line: int, covered: bool, source: str}]
     test_file_paths: list[str] | None = None
     generated_invocations: list[dict] | None = None  # [{signature, resolutionMode, orderIndex}]
+    direct_test_methods: list[dict] | None = None  # [{test_file, test_class, test_method}]
 
     def to_dict(self) -> dict:
         d = {
@@ -339,6 +340,8 @@ class SampleResult:
             d["test_file_paths"] = self.test_file_paths
         if self.generated_invocations is not None:
             d["generated_invocations"] = self.generated_invocations
+        if self.direct_test_methods is not None:
+            d["direct_test_methods"] = self.direct_test_methods
         return d
 
     @classmethod
@@ -411,4 +414,5 @@ class SampleResult:
             line_coverage=d.get("line_coverage"),
             test_file_paths=d.get("test_file_paths"),
             generated_invocations=d.get("generated_invocations"),
+            direct_test_methods=d.get("direct_test_methods"),
         )
