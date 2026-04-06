@@ -280,6 +280,15 @@ def parse_jacoco_xml(xml_path: str | Path) -> CoverageMap:
     return coverage
 
 
+def _mvn_cmd(project_path: Path) -> str:
+    """Return a cross-platform Maven command, preferring the wrapper if present."""
+    is_windows = platform.system() == "Windows"
+    wrapper = project_path / ("mvnw.cmd" if is_windows else "mvnw")
+    if wrapper.exists():
+        return str(wrapper)
+    return "mvn.cmd" if is_windows else "mvn"
+
+
 # ── Run tests with JaCoCo ────────────────────────────────────────────────────
 
 def run_jacoco_maven(
@@ -290,8 +299,9 @@ def run_jacoco_maven(
     project_path = Path(project_path)
     report_path = project_path / "target" / "site" / "jacoco" / "jacoco.xml"
 
+    mvn = _mvn_cmd(project_path)
     cmd = [
-        "mvn",
+        mvn,
         "-f", str(project_path / "pom.xml"),
         "org.jacoco:jacoco-maven-plugin:prepare-agent",
         "test",

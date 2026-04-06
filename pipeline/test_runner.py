@@ -197,6 +197,15 @@ def _parse_test_reports(
 # Helpers: Gradle command construction
 # ---------------------------------------------------------------------------
 
+def _mvn_cmd(project_path: Path) -> str:
+    """Return a cross-platform Maven command, preferring the wrapper if present."""
+    is_windows = platform.system() == "Windows"
+    wrapper = project_path / ("mvnw.cmd" if is_windows else "mvnw")
+    if wrapper.exists():
+        return str(wrapper)
+    return "mvn.cmd" if is_windows else "mvn"
+
+
 def _gradlew_cmd(project_path: Path) -> str:
     """Return a cross-platform path to the Gradle wrapper, relative to cwd."""
     is_windows = platform.system() == "Windows"
@@ -255,12 +264,15 @@ def _build_full_gradle_cmd(
             if cmd and cmd[0] in ("./gradlew", "gradlew"):
                 bat = project_path / "gradlew.bat"
                 cmd[0] = str(bat) if bat.exists() else "gradle"
+            elif cmd and cmd[0] in ("mvn", "./mvnw", "mvnw"):
+                cmd[0] = _mvn_cmd(project_path)
         else:
             cmd = shlex.split(test_command)
         return cmd
 
     if build_system == "maven":
-        return ["mvn", "test", "-f", str(project_path / "pom.xml"), "-q"]
+        mvn = _mvn_cmd(project_path)
+        return [mvn, "test", "-f", str(project_path / "pom.xml"), "-q"]
     if build_system == "gradle":
         gradle = _gradlew_cmd(project_path)
         return [gradle, "test", "-q", "--no-daemon"]

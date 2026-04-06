@@ -149,8 +149,16 @@ public class ClasspathResolver {
             return List.of();
         }
 
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        Path mvnw = projectPath.resolve(isWindows ? "mvnw.cmd" : "mvnw");
+        String mvnCmd;
+        if (Files.exists(mvnw)) {
+            mvnCmd = mvnw.toAbsolutePath().toString();
+        } else {
+            mvnCmd = isWindows ? "mvn.cmd" : "mvn";
+        }
         List<String> command = List.of(
-                "mvn", "-q", "-DskipTests", "-DincludeScope=compile",
+                mvnCmd, "-q", "-DskipTests", "-DincludeScope=compile",
                 "dependency:build-classpath", "-Dmdep.outputFile=" + outputFile
         );
 

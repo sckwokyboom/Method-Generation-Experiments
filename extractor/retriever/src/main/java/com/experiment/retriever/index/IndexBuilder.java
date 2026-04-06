@@ -29,8 +29,7 @@ public class IndexBuilder {
 
     public void buildIndex(Path inputPath, Path indexDir) throws IOException {
         log.info("Reading extraction data from {}", inputPath);
-        String json = Files.readString(inputPath, StandardCharsets.UTF_8);
-        ExtractionResult extraction = MAPPER.readValue(json, ExtractionResult.class);
+        ExtractionResult extraction = MAPPER.readValue(inputPath.toFile(), ExtractionResult.class);
 
         List<ExtractedMethod> methods = extraction.methods();
         log.info("Loaded {} methods from extraction", methods.size());

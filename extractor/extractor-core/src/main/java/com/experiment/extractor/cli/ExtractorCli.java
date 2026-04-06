@@ -97,7 +97,13 @@ public class ExtractorCli implements Callable<Integer> {
         if (Files.exists(gradlew)) {
             command = List.of(gradlew.toAbsolutePath().toString(), "compileJava");
         } else if (Files.exists(projectPath.resolve("pom.xml"))) {
-            command = List.of("mvn", "compile", "-DskipTests");
+            Path mvnw = projectPath.resolve(isWindows ? "mvnw.cmd" : "mvnw");
+            if (Files.exists(mvnw)) {
+                command = List.of(mvnw.toAbsolutePath().toString(), "compile", "-DskipTests");
+            } else {
+                String mvnCmd = isWindows ? "mvn.cmd" : "mvn";
+                command = List.of(mvnCmd, "compile", "-DskipTests");
+            }
         } else {
             command = List.of("gradle", "compileJava");
         }
