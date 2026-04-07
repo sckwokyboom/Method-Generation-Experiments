@@ -28,6 +28,7 @@ class ExtractionConfig:
     require_test_coverage: bool = False
     min_coverage_ratio: float = 0.0
     require_public: bool = False
+    max_file_tokens: int = 0  # 0 = no limit; e.g., 50000 to exclude huge files
 
 
 @dataclass

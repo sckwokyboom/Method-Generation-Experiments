@@ -195,6 +195,14 @@ class RetrievalResponse:
             query_debug=d.get("queryDebug", ""),
         )
 
+    def to_dict(self) -> dict:
+        return {
+            "results": [r.to_dict() for r in self.results],
+            "totalHits": self.total_hits,
+            "searchTimeMs": self.search_time_ms,
+            "queryDebug": self.query_debug,
+        }
+
 
 @dataclass
 class MetricsResult:

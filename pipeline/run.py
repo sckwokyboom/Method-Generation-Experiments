@@ -151,14 +151,16 @@ def process_sample(
         effective_retrieval = filter_leakage(retrieval_response, method)
         retrieval_aug = format_retrieval_augmentation(effective_retrieval, ret_cfg)
 
-    fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
-
-    # Budget check: if prompt + max_tokens would exceed context_window,
-    # progressively trim augmentation (fewer retrieved methods) until it fits.
-    # When zero methods fit, retrieval_aug becomes "" (not None) so that
-    # build_fim_prompt stays in retrieval_augmentation mode without falling
-    # back to oracle invocation augmentation.
+    # Compute the token budget for the prompt (context_window - max_tokens).
+    # build_fim_prompt will trim prefix/suffix to fit within this budget.
     context_window = config.llm.context_window
+    token_budget = max(0, context_window - config.llm.max_tokens) if context_window > 0 else 0
+
+    fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug,
+                                  token_budget=token_budget)
+
+    # For retrieval modes: if prompt still exceeds budget after prefix/suffix trimming,
+    # progressively trim retrieval results (fewer retrieved methods) until it fits.
     if context_window > 0 and effective_retrieval:
         prompt_tokens = count_tokens(fim_prompt.full_prompt)
         n_results = len(effective_retrieval.results)
@@ -171,7 +173,8 @@ def process_sample(
                 query_debug=retrieval_response.query_debug,
             )
             retrieval_aug = format_retrieval_augmentation(effective_retrieval, ret_cfg)
-            fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug)
+            fim_prompt = build_fim_prompt(method, mode, config.experiment.shuffle_seed, retrieval_aug,
+                                          token_budget=token_budget)
             prompt_tokens = count_tokens(fim_prompt.full_prompt)
             log.info("[%s] Trimmed augmentation to %d results (%d prompt tokens)",
                      mode, n_results, prompt_tokens)
@@ -359,6 +362,86 @@ def _validate_manifest(samples_dir: Path, mode: str, config: Config) -> bool:
     return False
 
 
+def _compute_retrieval_manifest(ret_mode: str, config: Config, methods: list[ExtractedMethod]) -> str:
+    """Compute a hash that captures all parameters affecting retrieval results.
+
+    Intentionally excludes LLM config so that changing only the model does NOT
+    invalidate the retrieval cache.
+    """
+    ret_cfg = _retrieval_config_for_mode(config, ret_mode)
+    manifest = {
+        "mode": ret_mode,
+        "sample_count": config.dataset.sample_count,
+        "random_seed": config.dataset.random_seed,
+        "extraction_output": config.extraction.output,
+        "extraction_config": dataclasses.asdict(config.extraction),
+        "project_path": config.project.path,
+        "project_tag": config.project.tag,
+        "retrieval": {
+            "retriever_type": ret_cfg.retriever_type,
+            "top_k": ret_cfg.top_k,
+            "max_augmentation_tokens": ret_cfg.max_augmentation_tokens,
+            "max_results_in_prompt": ret_cfg.max_results_in_prompt,
+            "max_body_lines": ret_cfg.max_body_lines,
+            "include_body": ret_cfg.include_body,
+            "near_duplicate_threshold": ret_cfg.near_duplicate_threshold,
+            "external_retriever_class": ret_cfg.external_retriever_class,
+            "external_retriever_jars": sorted(ret_cfg.external_retriever_jars),
+            "project_source_roots": sorted(ret_cfg.project_source_roots),
+        } if ret_cfg else {},
+        # Include method IDs so dataset changes invalidate cache
+        "method_ids": [f"{m.class_fqn}#{m.method_name}#{m.body_start_offset}" for m in methods],
+        # Source file hash for retrieval.py
+        "_retrieval_source_hash": _hash_file(Path(__file__).parent / "retrieval.py"),
+    }
+    raw = json.dumps(manifest, sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _save_retrieval_cache(
+    output_dir: Path,
+    ret_mode: str,
+    responses: list[RetrievalResponse | None],
+    manifest_hash: str,
+) -> None:
+    """Persist retrieval responses to disk for reuse across runs."""
+    cache_dir = output_dir / "retrieval_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{ret_mode}.json"
+    data = {
+        "manifest_hash": manifest_hash,
+        "responses": [r.to_dict() if r else None for r in responses],
+    }
+    cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    log.info("Saved retrieval cache for mode %s (%d responses) to %s",
+             ret_mode, len(responses), cache_file)
+
+
+def _load_retrieval_cache(
+    output_dir: Path,
+    ret_mode: str,
+    expected_hash: str,
+) -> list[RetrievalResponse | None] | None:
+    """Load cached retrieval responses if the manifest matches. Returns None on miss."""
+    cache_file = output_dir / "retrieval_cache" / f"{ret_mode}.json"
+    if not cache_file.exists():
+        return None
+    try:
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+        if data.get("manifest_hash") != expected_hash:
+            log.info("Retrieval cache manifest mismatch for %s — will recompute", ret_mode)
+            return None
+        responses = [
+            RetrievalResponse.from_dict(r) if r else None
+            for r in data["responses"]
+        ]
+        log.info("Loaded %d retrieval responses from cache for mode %s", len(responses), ret_mode)
+        return responses
+    except Exception as e:
+        log.warning("Failed to load retrieval cache for %s: %s", ret_mode, e)
+        return None
+
+
 def _write_manifest(samples_dir: Path, mode: str, config: Config) -> None:
     manifest_path = samples_dir / "run_manifest.json"
     manifest_path.write_text(
@@ -515,9 +598,18 @@ def run_experiment(config: Config) -> None:
     retrieval_modes = [m for m in config.experiment.modes if is_retrieval_mode(m)]
     retrieval_responses_map: dict[str, list[RetrievalResponse | None]] = {}
 
+    output_dir = Path(config.output.dir)
+
     for ret_mode in retrieval_modes:
         ret_cfg = _retrieval_config_for_mode(config, ret_mode)
         # _retrieval_config_for_mode raises ValueError if rag_<name> has no config
+
+        # Check retrieval cache first — avoids recomputing when only LLM config changed
+        ret_manifest_hash = _compute_retrieval_manifest(ret_mode, config, methods)
+        cached = _load_retrieval_cache(output_dir, ret_mode, ret_manifest_hash)
+        if cached is not None and len(cached) == len(methods):
+            retrieval_responses_map[ret_mode] = cached
+            continue
 
         log.info("=== Setting up retrieval for mode: %s (type=%s) ===",
                  ret_mode, ret_cfg.retriever_type)
@@ -540,8 +632,8 @@ def run_experiment(config: Config) -> None:
                 all_methods=all_extraction_methods,
             )
             retrieval_responses_map[ret_mode] = responses
+            _save_retrieval_cache(output_dir, ret_mode, responses, ret_manifest_hash)
 
-    output_dir = Path(config.output.dir)
     max_concurrent = config.llm.max_concurrent_requests
     all_results: dict[str, list[SampleResult]] = {}
 

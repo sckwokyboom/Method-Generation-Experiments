@@ -28,10 +28,12 @@ def filter_methods(
     coverage_map: CoverageMap | None = None,
     min_coverage_ratio: float = 0.0,
     require_public: bool = False,
+    max_file_tokens: int = 0,
 ) -> list[ExtractedMethod]:
     filtered = []
     stats = {"category": 0, "statements": 0, "invocations": 0, "unresolved": 0,
-             "void": 0, "no_params": 0, "no_coverage": 0, "low_coverage": 0, "non_public": 0}
+             "void": 0, "no_params": 0, "no_coverage": 0, "low_coverage": 0,
+             "non_public": 0, "file_too_large": 0}
     for m in methods:
         if m.category in exclude_categories:
             stats["category"] += 1
@@ -48,6 +50,11 @@ def filter_methods(
         if require_public and not m.method_signature.startswith("public "):
             stats["non_public"] += 1
             continue
+        if max_file_tokens > 0:
+            from pipeline.tokenizer import count_tokens
+            if count_tokens(m.file_content) > max_file_tokens:
+                stats["file_too_large"] += 1
+                continue
         if require_non_void and (m.return_type is None or m.return_type == "void"):
             stats["void"] += 1
             continue
@@ -106,6 +113,7 @@ def build_dataset(
         coverage_map=coverage_map,
         min_coverage_ratio=config.extraction.min_coverage_ratio,
         require_public=config.extraction.require_public,
+        max_file_tokens=config.extraction.max_file_tokens,
     )
     sampled = sample_dataset(methods, config.dataset.sample_count, config.dataset.random_seed)
 
