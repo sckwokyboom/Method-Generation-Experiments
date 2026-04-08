@@ -78,6 +78,31 @@ def find_method_signature_position(file_content: str, body_start_offset: int) ->
     return _find_declaration_start(file_content, line_start)
 
 
+def _find_nearest_brace(file_content: str, approx_pos: int, brace: str) -> int | None:
+    """Search for the nearest occurrence of `brace` (either '{' or '}') near approx_pos.
+
+    Used to correct offset drift (e.g., JDT UTF-16 vs Python code points).
+    Searches a window of ±200 chars around approx_pos.
+    """
+    window = 200
+    start = max(0, approx_pos - window)
+    end = min(len(file_content), approx_pos + window)
+    # Find all positions of the brace in the window
+    best = None
+    best_dist = window + 1
+    pos = start
+    while pos < end:
+        idx = file_content.find(brace, pos, end)
+        if idx == -1:
+            break
+        dist = abs(idx - approx_pos)
+        if dist < best_dist:
+            best_dist = dist
+            best = idx
+        pos = idx + 1
+    return best
+
+
 def _find_declaration_start(file_content: str, approx_pos: int) -> int:
     pos = approx_pos
     while pos > 0:
@@ -460,10 +485,12 @@ def _build_structured_prefix(
     method: ExtractedMethod,
     aug_block: str | None,
     budget_tokens: int,
+    body_start: int | None = None,
 ) -> str:
     """Build a trimmed prefix preserving semantic structure."""
     file_content = method.file_content
-    body_start = method.body_start_offset
+    if body_start is None:
+        body_start = method.body_start_offset
 
     sections = _extract_file_sections(file_content, body_start, method)
 
@@ -523,6 +550,7 @@ def _build_structured_prefix(
 def _build_structured_suffix(
     method: ExtractedMethod,
     budget_tokens: int,
+    body_end: int | None = None,
 ) -> str:
     """Build a trimmed suffix. Suffix starts with the method's closing '}' and
     continues into the rest of the class. We keep the *beginning* of the suffix
@@ -531,7 +559,8 @@ def _build_structured_suffix(
     sibling members or closing braces of the class.
     """
     file_content = method.file_content
-    body_end = method.body_end_offset
+    if body_end is None:
+        body_end = method.body_end_offset
     full_suffix = file_content[body_end:]
 
     if budget_tokens <= 0:
@@ -604,6 +633,17 @@ def build_fim_prompt(
     body_start = method.body_start_offset
     body_end = method.body_end_offset
 
+    # Defensive offset correction: JDT may return UTF-16 code unit offsets
+    # that diverge from Python's code point offsets when the file contains
+    # characters outside the BMP. Correct by searching nearby for the '{'.
+    if body_start < len(file_content) and file_content[body_start] != "{":
+        corrected = _find_nearest_brace(file_content, body_start, "{")
+        if corrected is not None:
+            shift = corrected - body_start
+            body_start = corrected
+            # Also shift body_end by the same amount (assuming consistent drift)
+            body_end = body_end + shift
+
     prefix = file_content[:body_start + 1]
     suffix = file_content[body_end:]
     ground_truth = file_content[body_start + 1 : body_end]
@@ -645,8 +685,9 @@ def build_fim_prompt(
 
         # For non-retrieval modes, aug_block is included inside the prefix
         aug_for_prefix = aug_block if not is_retrieval_mode(mode) else None
-        prefix = _build_structured_prefix(method, aug_for_prefix, prefix_budget)
-        suffix = _build_structured_suffix(method, suffix_budget)
+        prefix = _build_structured_prefix(method, aug_for_prefix, prefix_budget,
+                                          body_start=body_start)
+        suffix = _build_structured_suffix(method, suffix_budget, body_end=body_end)
 
     # ── Assemble FIM prompt (tokens added LAST, after all trimming) ──
     full_prompt = f"{cross_file_context}{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"

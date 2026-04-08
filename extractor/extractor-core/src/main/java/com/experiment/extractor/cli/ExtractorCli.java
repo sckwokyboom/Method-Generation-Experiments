@@ -1,16 +1,22 @@
 package com.experiment.extractor.cli;
 
 import com.experiment.extractor.analysis.MethodExtractor;
+import com.experiment.shared.model.ExtractedMethod;
 import com.experiment.shared.model.ExtractionResult;
+import com.fasterxml.jackson.core.JsonEncoding;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -78,15 +84,66 @@ public class ExtractorCli implements Callable<Integer> {
             Path parent = outputPath.getParent();
             if (parent != null) Files.createDirectories(parent);
 
-            ObjectMapper mapper = new ObjectMapper();
-            mapper.enable(SerializationFeature.INDENT_OUTPUT);
-            mapper.writeValue(outputPath.toFile(), result);
+            writeExtractionResultStreaming(result, outputPath);
 
             log.info("Wrote {} extracted methods to {}", result.methods().size(), outputPath);
             return 0;
         } catch (Exception e) {
             log.error("Extraction failed", e);
             return 1;
+        }
+    }
+
+    /**
+     * Write ExtractionResult as JSON using Jackson streaming API.
+     * Writes methods one at a time to a buffered OutputStream, avoiding any
+     * internal String/TextBuffer buffering that could blow up on large projects.
+     */
+    private void writeExtractionResultStreaming(ExtractionResult result, Path outputPath) throws IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonFactory factory = mapper.getFactory();
+
+        try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(outputPath), 1 << 20);
+             JsonGenerator gen = factory.createGenerator(out, JsonEncoding.UTF8)) {
+
+            gen.setPrettyPrinter(new DefaultPrettyPrinter());
+
+            gen.writeStartObject();
+
+            if (result.projectName() != null) {
+                gen.writeStringField("projectName", result.projectName());
+            }
+
+            if (result.meta() != null) {
+                gen.writeFieldName("meta");
+                mapper.writeValue(gen, result.meta());
+            }
+
+            if (result.classpath() != null) {
+                gen.writeFieldName("classpath");
+                gen.writeStartArray();
+                for (String cp : result.classpath()) {
+                    gen.writeString(cp);
+                }
+                gen.writeEndArray();
+            }
+
+            gen.writeFieldName("methods");
+            gen.writeStartArray();
+            List<ExtractedMethod> methods = result.methods();
+            int count = 0;
+            for (ExtractedMethod method : methods) {
+                mapper.writeValue(gen, method);
+                count++;
+                if (count % 5000 == 0) {
+                    log.info("Serialized {}/{} methods ...", count, methods.size());
+                    gen.flush();
+                }
+            }
+            gen.writeEndArray();
+
+            gen.writeEndObject();
+            gen.flush();
         }
     }
 
