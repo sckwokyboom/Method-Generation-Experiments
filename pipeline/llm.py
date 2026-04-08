@@ -15,6 +15,9 @@ FIM_TOKENS = {"<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>", "<|fim_pad|>
 
 MAX_RETRIES = 3
 BACKOFF_BASE = 2.0
+# Extra headroom applied to read timeout on each retry after a ReadTimeout,
+# in case the server is slow or under load.
+TIMEOUT_GROWTH_FACTOR = 1.5
 
 _CONTEXT_RE = re.compile(
     r"(\d+)\s*input\s*tokens.*?(\d+)\s*output\s*tokens.*?"
@@ -44,6 +47,7 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
         payload["seed"] = config.seed
 
     last_error = None
+    current_read_timeout = config.timeout_seconds
     for attempt in range(MAX_RETRIES):
         try:
             start_time = time.monotonic()
@@ -54,7 +58,7 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
-                timeout=(10, config.timeout_seconds),
+                timeout=(10, current_read_timeout),
             )
             latency_ms = (time.monotonic() - start_time) * 1000
 
@@ -106,6 +110,22 @@ def generate_completion(prompt: str, config: LLMConfig) -> CompletionResult:
                 time.sleep(wait)
             else:
                 log.error("LLM request failed after %d attempts", MAX_RETRIES)
+        except requests.exceptions.ReadTimeout as e:
+            last_error = e
+            # Grow the read timeout on each retry — server may be slow/overloaded.
+            new_timeout = int(current_read_timeout * TIMEOUT_GROWTH_FACTOR)
+            log.warning(
+                "LLM read timeout after %ds (attempt %d/%d). Server may be slow. "
+                "Increasing timeout to %ds for retry.",
+                current_read_timeout, attempt + 1, MAX_RETRIES, new_timeout,
+            )
+            current_read_timeout = new_timeout
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(2.0)  # brief pause before retry
+            else:
+                log.error("LLM request timed out after %d attempts (final timeout=%ds). "
+                          "Consider increasing llm.timeout_seconds in config.",
+                          MAX_RETRIES, current_read_timeout)
         except (requests.RequestException, KeyError, IndexError) as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:

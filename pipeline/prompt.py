@@ -610,6 +610,97 @@ def _trim_from_end(text: str, max_tokens: int) -> str:
     return "\n".join(lines[:lo])
 
 
+def _emergency_hard_trim(
+    prefix: str,
+    suffix: str,
+    cross_file_context: str,
+    token_budget: int,
+) -> tuple[str, str, str, str]:
+    """Aggressively trim prefix, suffix, and cross_file_context until the assembled
+    FIM prompt fits within token_budget. Uses a combination of:
+      1. Line-based trimming via binary search (preserves structure)
+      2. Character-based hard cut as absolute last resort (guaranteed to fit)
+
+    Returns (prefix, suffix, cross_file_context, full_prompt).
+    """
+    fim_overhead = count_tokens(FIM_PREFIX + FIM_SUFFIX + FIM_MIDDLE) + _FIM_OVERHEAD_TOKENS
+
+    def assemble(p: str, s: str, cfc: str) -> str:
+        return f"{cfc}{FIM_PREFIX}{p}{FIM_SUFFIX}{s}{FIM_MIDDLE}"
+
+    # Phase 1: line-based shrinking of prefix, suffix, and cfc
+    for _ in range(15):
+        full = assemble(prefix, suffix, cross_file_context)
+        total = count_tokens(full)
+        if total <= token_budget:
+            return prefix, suffix, cross_file_context, full
+
+        excess = total - token_budget
+        # Distribute cut across all three parts by their current share
+        p_tok = count_tokens(prefix)
+        s_tok = count_tokens(suffix)
+        c_tok = count_tokens(cross_file_context) if cross_file_context else 0
+        total_content = max(1, p_tok + s_tok + c_tok)
+
+        # Shave 10% more than necessary to converge faster
+        cut_total = int(excess * 1.1) + 32
+        p_cut = int(cut_total * (p_tok / total_content))
+        s_cut = int(cut_total * (s_tok / total_content))
+        c_cut = cut_total - p_cut - s_cut
+
+        if p_tok > 32:
+            prefix = _trim_from_start(prefix, max(32, p_tok - p_cut))
+        if s_tok > 16:
+            suffix = _trim_from_end(suffix, max(16, s_tok - s_cut))
+        if c_tok > 0 and cross_file_context:
+            cross_file_context = _trim_from_end(cross_file_context, max(0, c_tok - c_cut))
+
+    # Phase 2: if line-based trimming didn't converge, do character-level hard cut.
+    # This is guaranteed to fit but may produce non-line-aligned prefix/suffix.
+    full = assemble(prefix, suffix, cross_file_context)
+    if count_tokens(full) <= token_budget:
+        return prefix, suffix, cross_file_context, full
+
+    # Compute a conservative char budget per part (assume ~2 chars/token for code)
+    non_content_budget = token_budget - fim_overhead
+    if non_content_budget <= 0:
+        return prefix, suffix, cross_file_context, full
+
+    # Allocate budget: cfc 20%, prefix 55%, suffix 25%
+    c_char_budget = int(non_content_budget * 0.20) * 2
+    p_char_budget = int(non_content_budget * 0.55) * 2
+    s_char_budget = int(non_content_budget * 0.25) * 2
+
+    if cross_file_context and len(cross_file_context) > c_char_budget:
+        cross_file_context = cross_file_context[:c_char_budget]
+    if len(prefix) > p_char_budget:
+        prefix = prefix[-p_char_budget:]  # keep the end (closest to hole)
+    if len(suffix) > s_char_budget:
+        suffix = suffix[:s_char_budget]  # keep the start (closest to hole)
+
+    full = assemble(prefix, suffix, cross_file_context)
+
+    # Phase 3: last-resort iterative halving if still over budget
+    attempts = 0
+    while count_tokens(full) > token_budget and attempts < 20:
+        if len(prefix) > 64:
+            prefix = prefix[len(prefix) // 4:]  # drop first quarter
+        if len(suffix) > 32:
+            suffix = suffix[: (len(suffix) * 3) // 4]  # drop last quarter
+        if cross_file_context and len(cross_file_context) > 32:
+            cross_file_context = cross_file_context[: len(cross_file_context) // 2]
+        full = assemble(prefix, suffix, cross_file_context)
+        attempts += 1
+
+    if count_tokens(full) > token_budget:
+        log.error(
+            "Emergency hard trim could not fit prompt: %d > %d after all phases",
+            count_tokens(full), token_budget,
+        )
+
+    return prefix, suffix, cross_file_context, full
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main prompt builder
 # ═══════════════════════════════════════════════════════════════════════════
@@ -665,9 +756,11 @@ def build_fim_prompt(
     if token_budget > 0:
         fim_overhead = count_tokens(FIM_PREFIX + FIM_SUFFIX + FIM_MIDDLE) + _FIM_OVERHEAD_TOKENS
         cfc_tokens = count_tokens(cross_file_context) if cross_file_context else 0
-        # Apply a 5% safety margin to account for tokenizer heuristic mismatch
-        # with the actual model tokenizer (we use tiktoken/heuristic, model may differ).
-        safety_margin = max(64, int(token_budget * 0.05))
+        # Apply a 15% safety margin to account for tokenizer heuristic mismatch.
+        # Our tokenizer (tiktoken cl100k_base or regex heuristic) is not the same
+        # as the model tokenizer (Qwen 2.5 Coder uses its own BPE vocab). A 15%
+        # margin is wasteful but safe across Qwen, Llama, Mistral, etc.
+        safety_margin = max(128, int(token_budget * 0.15))
         available = token_budget - fim_overhead - cfc_tokens - safety_margin
 
         if available <= 0:
@@ -693,40 +786,15 @@ def build_fim_prompt(
     full_prompt = f"{cross_file_context}{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"
 
     # ── Final safety net: emergency hard-cut if we still exceed budget ──
-    # This catches edge cases where _build_structured_prefix/suffix returned
-    # slightly more tokens than their budget (e.g., tokenizer rounding) or
-    # where mandatory sections exceeded their allocated budget.
-    if token_budget > 0:
-        actual_tokens = count_tokens(full_prompt)
-        if actual_tokens > token_budget:
-            log.warning(
-                "Prompt still exceeds budget after structured trimming "
-                "(%d > %d), applying emergency line-based truncation",
-                actual_tokens, token_budget,
-            )
-            # Aggressively shrink prefix and suffix by a shrink factor until it fits.
-            # We keep the method_header at the very end of prefix (closest to hole)
-            # and the beginning of suffix (closest to hole).
-            attempts = 0
-            while count_tokens(full_prompt) > token_budget and attempts < 10:
-                current_prefix_tokens = count_tokens(prefix)
-                current_suffix_tokens = count_tokens(suffix)
-                # Compute how many tokens we need to shave
-                excess = count_tokens(full_prompt) - token_budget
-                # Distribute cut 65/35 (prefix/suffix)
-                prefix_cut = max(1, int(excess * 0.65) + 16)
-                suffix_cut = max(1, int(excess * 0.35) + 16)
-                new_prefix_budget = max(64, current_prefix_tokens - prefix_cut)
-                new_suffix_budget = max(16, current_suffix_tokens - suffix_cut)
-                prefix = _trim_from_start(prefix, new_prefix_budget)
-                suffix = _trim_from_end(suffix, new_suffix_budget)
-                full_prompt = f"{cross_file_context}{FIM_PREFIX}{prefix}{FIM_SUFFIX}{suffix}{FIM_MIDDLE}"
-                attempts += 1
-            if count_tokens(full_prompt) > token_budget:
-                log.error(
-                    "Emergency truncation could not fit prompt within budget: %d > %d",
-                    count_tokens(full_prompt), token_budget,
-                )
+    if token_budget > 0 and count_tokens(full_prompt) > token_budget:
+        log.warning(
+            "Prompt still exceeds budget after structured trimming (%d > %d), "
+            "applying emergency truncation",
+            count_tokens(full_prompt), token_budget,
+        )
+        prefix, suffix, cross_file_context, full_prompt = _emergency_hard_trim(
+            prefix, suffix, cross_file_context, token_budget,
+        )
 
     # ── Integrity assertion ──
     assert full_prompt.count(FIM_PREFIX) == 1, "FIM_PREFIX missing or duplicated"
