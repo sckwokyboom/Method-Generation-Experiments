@@ -178,14 +178,41 @@ print(f'Unresolved invocations: {m[\"unresolvedInvocations\"]}')
 
 На [JGraphT-Builder](https://github.com/sckwokyboom/JGraphT-Builder) (~100 классов):
 
-- **590 вершин**, **963 уникальных ребра**, 4 self-loop'а на 3 вершинах
+- **477 вершин**, **811 уникальных рёбер**, `Σw = 1168` инвокаций, 3 self-loop'а, density ≈ 0.0036
 - Время построения матрицы — секунды; размер `adjacency.pt` — десятки КБ
+
+### Валидация и визуализация
+
+После сборки граф можно проверить и осмотреть глазами.
+
+1. **Формальный отчёт** (статистика + 7 sanity-чеков):
+
+   ```bash
+   python -m pipeline.call_graph_check ./results/call-graph
+   ```
+
+   Печатает summary, sanity-чеки (shape / dtype / sparse / positive weights / in-bounds / meta length / unique IDs), топ-10 по out/in/total degree, распределение весов и степеней (гистограммы), self-loops, изолированные вершины и случайную выборку из 5 методов с их outgoing edges для ручной сверки. Exit-код `0`, если все чеки прошли.
+
+2. **Интерактивный HTML-вьювер** (Google Material UI):
+
+   ```bash
+   python -m pipeline.call_graph_viewer ./results/call-graph \
+     -o ./results/call_graph_viewer.html \
+     --extraction-json ./results/extracted_methods.json
+   ```
+
+   Один самодостаточный HTML-файл (открывается без сервера). Вкладки:
+   - **Graph** — force-directed граф на Cytoscape.js; цвет узла = пакет, размер = суммарная степень, клик по узлу открывает панель деталей, рёбра инцидентные выделяются синим
+   - **Matrix** — канвас-хитмап матрицы смежности; сортировка по index / class / out-deg / in-deg, шкала log / linear / binary, размер ячейки 2–8px; клик по ячейке переходит к соответствующему ребру
+   - **Vertices** — таблица всех вершин с поиском и сортировкой по out/in degree
+
+   В панели деталей видны исходящие и входящие рёбра (кликабельны — сразу переход к целевой вершине) и тело метода с подсветкой синтаксиса Java (если передан `--extraction-json`).
 
 ### Замечания
 
 - Коллизии `vertex_id` при flattening (например, один и тот же метод встречается и как primary, и как sibling другого метода того же класса) логируются как warning и дедуплицируются по принципу «первый выигрывает» — это нормальное поведение, связанное с форматом JSON, а не баг.
 - Если хочется бинарный граф без весов — используйте `(A > 0).float()` на загруженной матрице, специальный режим не нужен.
-- Модуль публикует `mgx-call-graph` как console_script (после `pip install -e .`), эквивалентный `python -m pipeline.call_graph_cli`.
+- Модуль публикует console_scripts (после `pip install -e .`): `mgx-call-graph`, `mgx-call-graph-check`, `mgx-call-graph-viewer` — эквивалентные `python -m pipeline.call_graph_cli` / `call_graph_check` / `call_graph_viewer`.
 
 ---
 
