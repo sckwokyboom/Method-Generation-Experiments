@@ -31,6 +31,9 @@ class ClassField:
 @dataclass
 class SiblingMethod:
     signature: str
+    method_name: str
+    parameter_types: list[str]
+    return_type: str | None
     invocations: list[ResolvedInvocation]
     used_types: list[str]
 
@@ -38,6 +41,9 @@ class SiblingMethod:
     def from_dict(cls, d: dict) -> SiblingMethod:
         return cls(
             signature=d["signature"],
+            method_name=d.get("methodName", ""),
+            parameter_types=d.get("parameterTypes", []),
+            return_type=d.get("returnType"),
             invocations=[ResolvedInvocation.from_dict(inv) for inv in d.get("invocations", [])],
             used_types=d.get("usedTypes", []),
         )
