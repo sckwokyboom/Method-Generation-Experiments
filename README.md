@@ -122,6 +122,73 @@ print(f'Unresolved invocations: {m[\"unresolvedInvocations\"]}')
 
 ---
 
+## Построение матрицы смежности call-graph'а
+
+По JSON-у экстрактора собирается взвешенная матрица смежности call-graph'а проекта (PyTorch sparse COO).
+
+- **Вершины** — все методы проекта (primary + siblings, дедуплицированные по каноническому `vertex_id`)
+- **Рёбра** — направленные invocation'ы метода → метода; вес = количество вызовов в теле
+- **Фильтрация** — дропаются только `UNRESOLVED` invocations и EXACT-инвокации во внешние библиотеки (их нет в множестве вершин — «тупики» графа). Self-loops (рекурсия) сохраняются
+
+### Шаги
+
+1. **Собрать JSON без фильтров по категориям** — для графа нужны все методы класса, включая геттеры/сеттеры/делегаторы:
+
+   ```bash
+   JAVA_HOME=$(/usr/libexec/java_home -v 17) \
+     java -jar extractor/extractor-core/build/libs/method-extractor-0.2.0.jar \
+     --project-path ./target-project/<your-project> \
+     --output ./results/extracted_methods.json \
+     --all-methods \
+     --min-statements 0
+   ```
+
+   > Флаг `--all-methods` отключает фильтр по `MethodCategory` (по умолчанию остаются только `NORMAL`). `--min-statements 0` оставляет однострочные геттеры. Эти два флага нужны вместе — без них граф будет неполным.
+
+2. **Построить матрицу:**
+
+   ```bash
+   python -m pipeline.call_graph_cli ./results/extracted_methods.json \
+     -o ./results/call-graph \
+     --verbose
+   ```
+
+   На выходе — директория с двумя файлами:
+
+   | Файл | Что внутри |
+   |---|---|
+   | `adjacency.pt` | `torch.sparse_coo_tensor` формы `(N, N)`, `dtype=int64`, после `.coalesce()`. `A[i, j]` = количество инвокаций из метода `i` в метод `j` |
+   | `vertices.json` | `{"vertex_ids": [...], "vertex_meta": [...]}`. `vertex_ids[i]` — канонический ID метода `i` формата `<classFqn>::<methodName>(<paramFqn1>,...) -> <returnFqn>` (для конструкторов — `<init>` + returnType = classFqn). `vertex_meta[i]` — полные метаданные вершины (class_fqn, method_name, file_path, parameter_types, return_type, исходный список invocations) |
+
+3. **Использовать в Python:**
+
+   ```python
+   from pipeline.call_graph import load_call_graph
+
+   g = load_call_graph("results/call-graph")
+   A = g.to_dense()                  # torch.int64, shape (N, N) — веса
+   binary = (A > 0).to(torch.int64)  # бинарная матрица смежности
+   in_deg = A.sum(dim=0)             # in-degree каждой вершины
+   out_deg = A.sum(dim=1)            # out-degree
+   # Найти вершину по ID:
+   idx = g.vertex_ids.index("com.example.Foo::bar(int) -> void")
+   ```
+
+### Пример: JGraphT-Builder
+
+На [JGraphT-Builder](https://github.com/sckwokyboom/JGraphT-Builder) (~100 классов):
+
+- **590 вершин**, **963 уникальных ребра**, 4 self-loop'а на 3 вершинах
+- Время построения матрицы — секунды; размер `adjacency.pt` — десятки КБ
+
+### Замечания
+
+- Коллизии `vertex_id` при flattening (например, один и тот же метод встречается и как primary, и как sibling другого метода того же класса) логируются как warning и дедуплицируются по принципу «первый выигрывает» — это нормальное поведение, связанное с форматом JSON, а не баг.
+- Если хочется бинарный граф без весов — используйте `(A > 0).float()` на загруженной матрице, специальный режим не нужен.
+- Модуль публикует `mgx-call-graph` как console_script (после `pip install -e .`), эквивалентный `python -m pipeline.call_graph_cli`.
+
+---
+
 ## Инспекция сэмплов (без LLM)
 
 Перед запуском эксперимента можно посмотреть, как выглядят сэмплы: тело метода, найденные сигнатуры, промпты для каждого режима.
