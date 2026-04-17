@@ -447,6 +447,9 @@ public class MethodExtractor {
                 MethodInfo sib = allInfos.get(j);
                 siblings.add(new SiblingMethod(
                         sib.methodSig,
+                        sib.declaration.getName().getIdentifier(),
+                        sib.parameterTypes,
+                        sib.returnType,
                         sib.invocations,
                         sib.usedTypes
                 ));
