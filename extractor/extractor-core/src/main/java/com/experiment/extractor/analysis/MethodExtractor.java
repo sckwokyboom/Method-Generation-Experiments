@@ -23,6 +23,10 @@ public class MethodExtractor {
     private final boolean includeTests;
     private final boolean includeAllCategories;
 
+    public MethodExtractor(Path projectPath, int minStatements, boolean includeTests) {
+        this(projectPath, minStatements, includeTests, false);
+    }
+
     public MethodExtractor(Path projectPath, int minStatements, boolean includeTests, boolean includeAllCategories) {
         this.projectPath = projectPath.toAbsolutePath().normalize();
         this.minStatements = minStatements;
@@ -435,6 +439,8 @@ public class MethodExtractor {
         for (int i = 0; i < allInfos.size(); i++) {
             MethodInfo info = allInfos.get(i);
 
+            // minStatements applies to all categories regardless of --all-methods,
+            // so single-statement getters are still filtered out by default minStatements > 0.
             if (info.stmtCount < minStatements) {
                 continue;
             }

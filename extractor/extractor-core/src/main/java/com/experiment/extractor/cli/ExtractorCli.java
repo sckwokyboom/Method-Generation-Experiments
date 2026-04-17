@@ -50,7 +50,7 @@ public class ExtractorCli implements Callable<Integer> {
     private boolean includeTests;
 
     @Option(names = {"--all-methods"},
-            description = "Include methods of any category (bypass NORMAL-only filter)")
+            description = "Include methods of any category (getters, setters, etc.); --min-statements still applies")
     private boolean allMethods;
 
     @Option(names = {"--build-first"},

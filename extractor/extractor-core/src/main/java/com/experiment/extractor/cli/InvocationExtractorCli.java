@@ -92,7 +92,7 @@ public class InvocationExtractorCli implements Callable<Integer> {
             log.info("Processing {} samples with {} classpath entries and {} source roots",
                     samples.size(), classpath.length, sourceRoots.length);
 
-            MethodExtractor extractor = new MethodExtractor(projectPath, 0, false, false);
+            MethodExtractor extractor = new MethodExtractor(projectPath, 0, false);
 
             ArrayNode results = mapper.createArrayNode();
 
