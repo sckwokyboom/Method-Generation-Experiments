@@ -21,11 +21,13 @@ public class MethodExtractor {
     private final Path projectPath;
     private final int minStatements;
     private final boolean includeTests;
+    private final boolean includeAllCategories;
 
-    public MethodExtractor(Path projectPath, int minStatements, boolean includeTests) {
+    public MethodExtractor(Path projectPath, int minStatements, boolean includeTests, boolean includeAllCategories) {
         this.projectPath = projectPath.toAbsolutePath().normalize();
         this.minStatements = minStatements;
         this.includeTests = includeTests;
+        this.includeAllCategories = includeAllCategories;
     }
 
     public ExtractionResult extract() {
@@ -433,10 +435,10 @@ public class MethodExtractor {
         for (int i = 0; i < allInfos.size(); i++) {
             MethodInfo info = allInfos.get(i);
 
-            if (info.stmtCount < minStatements && info.category == MethodCategory.NORMAL) {
+            if (info.stmtCount < minStatements) {
                 continue;
             }
-            if (info.category != MethodCategory.NORMAL) {
+            if (!includeAllCategories && info.category != MethodCategory.NORMAL) {
                 continue;
             }
 

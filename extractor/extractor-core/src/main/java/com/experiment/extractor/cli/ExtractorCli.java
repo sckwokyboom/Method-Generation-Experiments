@@ -49,6 +49,10 @@ public class ExtractorCli implements Callable<Integer> {
             description = "Include test source files")
     private boolean includeTests;
 
+    @Option(names = {"--all-methods"},
+            description = "Include methods of any category (bypass NORMAL-only filter)")
+    private boolean allMethods;
+
     @Option(names = {"--build-first"},
             description = "Build the project before extraction")
     private boolean buildFirst;
@@ -78,7 +82,7 @@ public class ExtractorCli implements Callable<Integer> {
         }
 
         try {
-            MethodExtractor extractor = new MethodExtractor(projectPath, minStatements, includeTests);
+            MethodExtractor extractor = new MethodExtractor(projectPath, minStatements, includeTests, allMethods);
             ExtractionResult result = extractor.extract();
 
             Path parent = outputPath.getParent();
