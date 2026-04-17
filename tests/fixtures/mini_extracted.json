@@ -1,0 +1,74 @@
+{
+  "projectName": "mini",
+  "meta": {"extractedAt": "2026-04-17T00:00:00Z", "totalFilesScanned": 2, "totalClassesScanned": 2, "totalMethodsExtracted": 2, "totalMethodsRetained": 2, "totalMethodsSkipped": 0},
+  "classpath": [],
+  "methods": [
+    {
+      "filePath": "src/main/java/com/example/Foo.java",
+      "fileContent": "package com.example; class Foo {}",
+      "classFqn": "com.example.Foo",
+      "methodSignature": "bar(): void",
+      "methodName": "bar",
+      "methodBody": "{ helper(); helper(); External.call(); unresolved(); }",
+      "bodyStartOffset": 0,
+      "bodyEndOffset": 10,
+      "statementCount": 4,
+      "category": "NORMAL",
+      "invocations": [
+        {"signature": "com.example.Foo::helper() -> int", "resolutionMode": "EXACT", "orderIndex": 0},
+        {"signature": "com.example.Foo::helper() -> int", "resolutionMode": "EXACT", "orderIndex": 1},
+        {"signature": "com.other.External::call() -> void", "resolutionMode": "EXACT", "orderIndex": 2},
+        {"signature": "unresolved()", "resolutionMode": "UNRESOLVED", "orderIndex": 3}
+      ],
+      "imports": [],
+      "classFields": [],
+      "supertypes": [],
+      "siblingMethods": [
+        {
+          "signature": "helper(): int",
+          "methodName": "helper",
+          "parameterTypes": [],
+          "returnType": "int",
+          "invocations": [
+            {"signature": "com.example.Foo::bar() -> void", "resolutionMode": "EXACT", "orderIndex": 0}
+          ],
+          "usedTypes": []
+        }
+      ],
+      "returnType": "void",
+      "parameterTypes": [],
+      "thrownExceptions": [],
+      "usedTypes": []
+    },
+    {
+      "filePath": "src/main/java/com/example/Foo.java",
+      "fileContent": "package com.example; class Foo {}",
+      "classFqn": "com.example.Foo",
+      "methodSignature": "helper(): int",
+      "methodName": "helper",
+      "methodBody": "{ return 1; }",
+      "bodyStartOffset": 20,
+      "bodyEndOffset": 30,
+      "statementCount": 1,
+      "category": "NORMAL",
+      "invocations": [],
+      "imports": [],
+      "classFields": [],
+      "supertypes": [],
+      "siblingMethods": [
+        {
+          "signature": "bar(): void",
+          "methodName": "bar",
+          "parameterTypes": [],
+          "returnType": "void",
+          "invocations": [],
+          "usedTypes": []
+        }
+      ],
+      "returnType": "int",
+      "parameterTypes": [],
+      "thrownExceptions": [],
+      "usedTypes": []
+    }
+  ]
+}
