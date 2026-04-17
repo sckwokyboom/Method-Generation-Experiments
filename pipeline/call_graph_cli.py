@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
     save_call_graph(graph, args.out)
 
     n = len(graph.vertex_ids)
-    nnz = graph.adjacency._nnz()
+    nnz = graph.adjacency.values().numel()
     print(f"call graph: {n} vertices, {nnz} edges (after coalesce) -> {args.out}")
     return 0
 

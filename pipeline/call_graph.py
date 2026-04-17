@@ -13,16 +13,6 @@ import torch
 log = logging.getLogger(__name__)
 
 
-def canonical_vertex_id(
-    class_fqn: str,
-    method_name: str,
-    parameter_types: Iterable[str],
-    return_type: str,
-) -> str:
-    params = ",".join(parameter_types)
-    return f"{class_fqn}::{method_name}({params}) -> {return_type}"
-
-
 _WHITESPACE_AFTER_COMMA = re.compile(r",\s+")
 _MULTISPACE = re.compile(r"\s+")
 
@@ -34,6 +24,20 @@ def canonicalize_invocation_signature(signature: str) -> str:
         return head
     tail = _MULTISPACE.sub(" ", tail).strip()
     return f"{head} -> {tail}"
+
+
+def canonical_vertex_id(
+    class_fqn: str,
+    method_name: str,
+    parameter_types: Iterable[str],
+    return_type: str,
+) -> str:
+    # Route through the invocation-signature normalizer so vertex IDs and
+    # invocation-signature IDs use identical whitespace rules. Without this,
+    # a param like "Map<K, V>" (space after comma) would produce different
+    # IDs on each side and drop the edge silently.
+    raw = f"{class_fqn}::{method_name}({','.join(parameter_types)}) -> {return_type}"
+    return canonicalize_invocation_signature(raw)
 
 
 def flatten_vertices(extraction_data: dict) -> list[dict]:
