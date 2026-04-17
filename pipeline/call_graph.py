@@ -1,9 +1,14 @@
 """Build a weighted adjacency matrix of method call edges from an extractor JSON."""
 from __future__ import annotations
 
+import json
 import logging
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
+
+import torch
 
 log = logging.getLogger(__name__)
 
@@ -117,3 +122,68 @@ def build_edge_counts(vertices: list[dict]) -> dict[tuple[str, str], int]:
             key = (src, dst)
             counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+@dataclass
+class CallGraph:
+    """Sparse COO torch tensor representation of method call graph."""
+
+    vertex_ids: list[str]  # index → canonical vertex id (len == N)
+    vertex_meta: list[dict]  # index → dict from flatten_vertices (len == N)
+    adjacency: "torch.Tensor"  # sparse COO, shape (N, N), dtype=torch.int64, weight = invocation count
+
+    def to_dense(self) -> torch.Tensor:
+        """Convert sparse adjacency matrix to dense."""
+        return self.adjacency.to_dense()
+
+
+def build_call_graph(extraction_data: dict) -> CallGraph:
+    """Build a torch sparse COO adjacency matrix from extraction data."""
+    vertices = flatten_vertices(extraction_data)
+    edges = build_edge_counts(vertices)
+
+    vertex_ids = [v["vertex_id"] for v in vertices]
+    index = {vid: i for i, vid in enumerate(vertex_ids)}
+    n = len(vertex_ids)
+
+    if edges:
+        srcs = [index[src] for (src, _dst) in edges.keys()]
+        dsts = [index[dst] for (_src, dst) in edges.keys()]
+        values = list(edges.values())
+        indices = torch.tensor([srcs, dsts], dtype=torch.int64)
+        values_t = torch.tensor(values, dtype=torch.int64)
+    else:
+        indices = torch.empty((2, 0), dtype=torch.int64)
+        values_t = torch.empty((0,), dtype=torch.int64)
+
+    adjacency = torch.sparse_coo_tensor(
+        indices, values_t, size=(n, n), dtype=torch.int64
+    ).coalesce()
+    return CallGraph(vertex_ids=vertex_ids, vertex_meta=vertices, adjacency=adjacency)
+
+
+def save_call_graph(graph: CallGraph, out_path: Path) -> None:
+    """Save CallGraph to directory: adjacency.pt and vertices.json."""
+    out_path = Path(out_path)
+    out_path.mkdir(parents=True, exist_ok=True)
+    torch.save(graph.adjacency, out_path / "adjacency.pt")
+    with (out_path / "vertices.json").open("w", encoding="utf-8") as f:
+        json.dump(
+            {"vertex_ids": graph.vertex_ids, "vertex_meta": graph.vertex_meta},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+def load_call_graph(in_path: Path) -> CallGraph:
+    """Load CallGraph from directory: adjacency.pt and vertices.json."""
+    in_path = Path(in_path)
+    with (in_path / "vertices.json").open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    adjacency = torch.load(in_path / "adjacency.pt", weights_only=False)
+    return CallGraph(
+        vertex_ids=data["vertex_ids"],
+        vertex_meta=data["vertex_meta"],
+        adjacency=adjacency,
+    )
