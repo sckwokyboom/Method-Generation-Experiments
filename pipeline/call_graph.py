@@ -100,3 +100,20 @@ def _insert_vertex(
         "return_type": return_type,
         "invocations": list(invocations),
     }
+
+
+def build_edge_counts(vertices: list[dict]) -> dict[tuple[str, str], int]:
+    """Count occurrences of each EXACT internal method invocation edge."""
+    vertex_ids = {v["vertex_id"] for v in vertices}
+    counts: dict[tuple[str, str], int] = {}
+    for v in vertices:
+        src = v["vertex_id"]
+        for inv in v.get("invocations", []):
+            if inv.get("resolutionMode") != "EXACT":
+                continue
+            dst = canonicalize_invocation_signature(inv["signature"])
+            if dst not in vertex_ids:
+                continue
+            key = (src, dst)
+            counts[key] = counts.get(key, 0) + 1
+    return counts

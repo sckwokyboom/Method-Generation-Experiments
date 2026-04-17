@@ -87,3 +87,37 @@ def test_flatten_vertices_deduplicates_on_collision():
     assert len(bars) == 1
     # First-wins: invocation list should be the one from the primary entry (4 invocations), not the sibling (empty).
     assert len(bars[0]["invocations"]) == 4
+
+
+def test_build_edge_counts_counts_repeated_invocations():
+    from pipeline.call_graph import flatten_vertices, build_edge_counts
+
+    vertices = flatten_vertices(_load_fixture())
+    edges = build_edge_counts(vertices)
+    assert edges[("com.example.Foo::bar() -> void", "com.example.Foo::helper() -> int")] == 2
+
+
+def test_build_edge_counts_includes_reverse_edge():
+    from pipeline.call_graph import flatten_vertices, build_edge_counts
+
+    vertices = flatten_vertices(_load_fixture())
+    edges = build_edge_counts(vertices)
+    assert edges[("com.example.Foo::helper() -> int", "com.example.Foo::bar() -> void")] == 1
+
+
+def test_build_edge_counts_drops_external_targets():
+    from pipeline.call_graph import flatten_vertices, build_edge_counts
+
+    vertices = flatten_vertices(_load_fixture())
+    edges = build_edge_counts(vertices)
+    for (src, dst) in edges:
+        assert "External" not in dst
+
+
+def test_build_edge_counts_drops_unresolved():
+    from pipeline.call_graph import flatten_vertices, build_edge_counts
+
+    vertices = flatten_vertices(_load_fixture())
+    edges = build_edge_counts(vertices)
+    # Only two internal edges expected — bar→helper and helper→bar.
+    assert len(edges) == 2
