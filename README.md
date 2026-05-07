@@ -640,6 +640,32 @@ test_evaluation:
 
 Результат: метрика `test_pass` в агрегированном отчёте (доля сэмплов, где все тесты прошли после подстановки сгенерированного тела).
 
+### Датасет компилируемых, но тест-падающих генераций
+
+После прогона генерации, `javac`-проверки и `test_evaluation` можно собрать датасет методов, которые:
+
+1. компилируются (`metrics.compilable == true`);
+2. не совпадают с target-методом по Exact Match (`metrics.em == false`);
+3. ломают тесты проекта (`test_eval.success == false`, при успешной сборке тестового запуска).
+
+```bash
+python -m pipeline.failure_dataset ./results \
+  -o ./results/failure_dataset.jsonl \
+  --dedupe method_generated
+```
+
+Если нужен более строгий срез, где упавший тест эвристически связан с методом
+через `direct_test_methods`, `test_file_paths` или имя test-класса:
+
+```bash
+python -m pipeline.failure_dataset ./results \
+  -o ./results/related_failure_dataset.jsonl \
+  --require-related-failure \
+  --dedupe method_generated
+```
+
+CLI также доступен как `mgx-failure-dataset` после установки пакета. Рядом с датасетом создаётся summary-файл с количеством найденных кандидатов, распределением по режимам и причинами отбраковки.
+
 ### Выбор target-проекта
 
 Текущий target-проект: **JUnit 5** (`junit-team/junit5`).
